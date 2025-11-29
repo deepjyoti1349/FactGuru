@@ -1,0 +1,13 @@
+# Ignore virtual env
+factguru_env/
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large models / binaries (optional)
+*.pkl
+*.pt
+*.dll

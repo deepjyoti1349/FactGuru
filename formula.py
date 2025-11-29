@@ -1,0 +1,8 @@
+pat=float(input("enter the value of pattern analysis: "))
+sem=float(input("enter the semantics score: "))
+cred=float(input("enter the credibility score: "))
+result=sem*(abs(cred-pat))
+credibility=pow(cred,0.7)
+pattern=(1-pat)
+result=sem*(credibility)*(pattern)
+print(f"for pattern score: {pat}, semantics score: {sem} and credibility score of {cred}  , thr final result is {result}")
