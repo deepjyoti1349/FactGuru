@@ -42,48 +42,78 @@ else:
     log("❌ ml/ directory does not exist!")
 
 # Import Pattern Analysis module - COMPREHENSIVE DEBUG
-log("🔍 Starting pattern analysis import...")
+import os
+import sys
+
+# Get absolute paths to ensure correct imports
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ML_DIR = os.path.join(SCRIPT_DIR, 'ml')
+PATTERN_DIR = os.path.join(ML_DIR, 'pattern_analysis')
+
+log("🔍 Setting up pattern analysis import...")
+log(f"📁 Script directory: {SCRIPT_DIR}")
+log(f"📁 ML directory: {ML_DIR}")
+log(f"📁 Pattern directory: {PATTERN_DIR}")
+
+# Verify directories exist
+if not os.path.exists(ML_DIR):
+    log(f"❌ ML directory does not exist: {ML_DIR}")
+elif not os.path.exists(PATTERN_DIR):
+    log(f"❌ Pattern analysis directory does not exist: {PATTERN_DIR}")
+else:
+    log(f"✅ Directory structure verified")
+    log(f"📁 Pattern directory contents: {os.listdir(PATTERN_DIR)}")
+
+# Add directories to Python path (insert at beginning for priority)
+for path in [ML_DIR, PATTERN_DIR]:
+    if os.path.exists(path):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+            log(f"✅ Added to sys.path: {path}")
+        else:
+            log(f"ℹ️  Already in sys.path: {path}")
+
+# Import Pattern Analysis module
 PatternAnalyzerAvailable = False
 ArticleAnalyzer = None
 
 try:
-    # Try multiple paths
-    possible_paths = [
-        'ml/pattern_analysis',
-        './ml/pattern_analysis',
-        os.path.join(os.path.dirname(__file__), 'ml', 'pattern_analysis')
-    ]
+    log("🔍 Attempting pattern import...")
     
-    for path in possible_paths:
-        log(f"🔍 Trying pattern path: {path}")
-        log(f"🔍 Path exists: {os.path.exists(path)}")
+    # Method 1: Direct import (since we added pattern_dir to path)
+    try:
+        from pattern import ArticleAnalyzer
+        PatternAnalyzerAvailable = True
+        log("✅ Pattern analysis imported successfully (Method 1: direct import)")
+    except ImportError:
+        log("⚠️  Method 1 failed, trying Method 2...")
         
-        if os.path.exists(path):
-            if path not in sys.path:
-                sys.path.append(path)
-                log(f"✅ Added to Python path: {path}")
-            
-            try:
-                from pattern import ArticleAnalyzer
-                log("✅ Pattern analysis import SUCCESSFUL!")
-                PatternAnalyzerAvailable = True
-                log(f"✅ Using path: {path}")
-                break
-            except ImportError as e:
-                log(f"❌ Import failed from {path}: {e}")
-                # Show what's in the directory
-                if os.path.exists(path):
-                    log(f"📁 Files in {path}: {os.listdir(path)}")
-                continue
-        else:
-            log(f"❌ Path does not exist: {path}")
+        # Method 2: Full module path
+        try:
+            from ml.pattern_analysis.pattern import ArticleAnalyzer
+            PatternAnalyzerAvailable = True
+            log("✅ Pattern analysis imported successfully (Method 2: full path)")
+        except ImportError as e:
+            log(f"❌ Method 2 also failed: {e}")
+            raise
     
-    if not PatternAnalyzerAvailable:
-        log("❌ Could not load pattern analysis from any path!")
-        
+except ImportError as e:
+    log(f"❌ Pattern analysis import failed completely: {e}")
+    log(f"❌ Traceback: {type(e).__name__}")
+    log("⚠️  Continuing without pattern analysis...")
+    PatternAnalyzerAvailable = False
+    ArticleAnalyzer = None
+    
 except Exception as e:
-    log(f"❌ Pattern analysis setup failed: {e}")
+    log(f"❌ Unexpected error during pattern import: {e}")
+    PatternAnalyzerAvailable = False
+    ArticleAnalyzer = None
 
+# Log final status
+if PatternAnalyzerAvailable:
+    log("✅ PATTERN ANALYSIS READY")
+else:
+    log("❌ PATTERN ANALYSIS NOT AVAILABLE")
 class IntelligentFactGuru:
     """
     Main fact verification system that combines multiple analysis techniques:
