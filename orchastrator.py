@@ -100,9 +100,14 @@ class IntelligentFactGuru:
             cleaned_claim, _ = self.input_handler.process_input(claim)
 
             # Step 2: Pattern analysis on the claim itself
+           # Step 2: Pattern analysis on the claim itself
+            log("🔍 Starting pattern analysis...")
             pattern_analysis = self._analyze_with_patterns(cleaned_claim)
             if pattern_analysis:
                 results["components"]["pattern_analysis"] = pattern_analysis
+                log(f"✅ Pattern analysis result: {pattern_analysis.get('prediction', 'N/A')}")
+            else:
+                log("❌ Pattern analysis returned None")
 
             # Step 3: Search for relevant content online
             search_results = self.search_connector.search_driver(cleaned_claim)
