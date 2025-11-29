@@ -37,10 +37,28 @@ def update_progress(step: int, name: str, details: str = ""):
         'is_running': True
     }
 
+def test_pattern_import():
+    """Test if pattern analysis can be imported"""
+    try:
+        # Try different import methods
+        try:
+            from ml.pattern_analysis.pattern import ArticleAnalyzer
+            return "✅ Pattern import SUCCESS (ml.pattern_analysis.pattern)"
+        except ImportError:
+            try:
+                import sys
+                sys.path.append('ml/pattern_analysis')
+                from pattern import ArticleAnalyzer
+                return "✅ Pattern import SUCCESS (direct pattern)"
+            except ImportError as e:
+                return f"❌ Pattern import FAILED: {e}"
+    except Exception as e:
+        return f"❌ Pattern import ERROR: {e}"
+
 def load_orchestrator():
     """Load the advanced fact verification system"""
     try:
-        from orchastrator import IntelligentFactGuru  # ✅ CORRECT - FIXED INDENTATION
+        from orchastrator import IntelligentFactGuru
         system = IntelligentFactGuru()
         return system
     except Exception as e:
@@ -172,6 +190,24 @@ def display_pattern_analysis(pattern_data: Dict[str, Any]):
             st.write(f"**Suspicious Words:** {', '.join(suspicious_words[:5])}")
 
 def main():
+    # === TEMPORARY DEBUG - ADD THIS AT THE START ===
+    st.sidebar.markdown("### 🐛 DEBUG INFO")
+    
+    # Directory structure check
+    st.sidebar.write("📁 Current directory files:", os.listdir('.'))
+    if os.path.exists('ml'):
+        st.sidebar.write("📁 ml/ contents:", os.listdir('ml'))
+        if os.path.exists('ml/pattern_analysis'):
+            st.sidebar.write("📁 ml/pattern_analysis contents:", os.listdir('ml/pattern_analysis'))
+        else:
+            st.sidebar.write("❌ ml/pattern_analysis does NOT exist")
+    else:
+        st.sidebar.write("❌ ml/ directory does NOT exist")
+    
+    # Pattern import test
+    st.sidebar.write(test_pattern_import())
+    # === END TEMPORARY DEBUG ===
+    
     # Header
     st.title("🕵️‍♂️ FactGuru – Advanced Fact Verification System")
     st.markdown("""
