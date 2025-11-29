@@ -1,6 +1,4 @@
 streamlit
-torch
-transformers
 scikit-learn
 pandas
 numpy
@@ -8,7 +6,8 @@ joblib
 beautifulsoup4
 requests
 duckduckgo-search
+transformers
+torch
 tldextract
 python-dotenv
 lxml
-
