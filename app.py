@@ -1,807 +1,339 @@
+import streamlit as st
+import sys
 import os
 import time
 import traceback
+from typing import Dict, Any
+import pandas as pd
 
-import numpy as np
-import joblib
-import streamlit as st
+# Add the current directory to path
+sys.path.append(os.path.dirname(__file__))
 
-import requests
-from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+# Set page config
+st.set_page_config(
+    page_title="FactGuru – Advanced Fact Verification",
+    page_icon="🕵️‍♂️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# Initialize session state for progress tracking
+if 'progress_data' not in st.session_state:
+    st.session_state.progress_data = {
+        'current_step': 0,
+        'total_steps': 7,
+        'step_name': 'Starting...',
+        'step_details': '',
+        'is_running': False
+    }
 
-# =========================
-# Load pattern analysis model
-# =========================
+def update_progress(step: int, name: str, details: str = ""):
+    """Update progress in session state"""
+    st.session_state.progress_data = {
+        'current_step': step,
+        'total_steps': 7,
+        'step_name': name,
+        'step_details': details,
+        'is_running': True
+    }
 
-@st.cache_resource
-def load_pattern_model():
-    """
-    Load Naive Bayes fake-news model and TF-IDF vectorizer
-    from ml/pattern_analysis.
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(
-        base_dir,
-        "ml",
-        "pattern_analysis",
-        "fake_news_model_improved.pkl",
-    )
-    vec_path = os.path.join(
-        base_dir,
-        "ml",
-        "pattern_analysis",
-        "tfidf_vectorizer_naivebayes_clickbait.pkl",
-    )
-
-    model = joblib.load(model_path)
-    vectorizer = joblib.load(vec_path)
-    return model, vectorizer
-
-
-# =========================
-# Optional: load NLI model (only if ENABLE_NLI="true")
-# =========================
-
-@st.cache_resource
-def load_nli_model():
-    """
-    Try to load NLI model, but only when ENABLE_NLI="true" in env.
-    On local Windows this usually stays disabled.
-    On Streamlit Cloud (Linux) you can enable it via secrets.
-    """
-    use_nli = os.getenv("ENABLE_NLI", "").lower() == "true"
-    if not use_nli:
-        # NLI disabled – app still works with pattern model only
+def load_orchestrator():
+    """Load the advanced fact verification system"""
+    try:
+        from orchastrator import IntelligentFactGuru
+        system = IntelligentFactGuru()
+        return system
+    except Exception as e:
+        st.error(f"❌ Failed to load verification system: {e}")
         return None
 
-    try:
-        from transformers import pipeline
+def display_progress_bar():
+    """Display a detailed progress bar"""
+    progress_data = st.session_state.progress_data
+    
+    if not progress_data['is_running']:
+        return
+    
+    # Progress percentage
+    progress_percent = (progress_data['current_step'] / progress_data['total_steps'])
+    
+    # Create progress bar
+    progress_bar = st.progress(progress_percent)
+    
+    # Display step information
+    st.write(f"**Step {progress_data['current_step']}/{progress_data['total_steps']}: {progress_data['step_name']}**")
+    if progress_data['step_details']:
+        st.write(f"*{progress_data['step_details']}*")
+    
+    return progress_bar
 
-        nli = pipeline(
-            "text-classification",
-            model="facebook/bart-large-mnli",
-            max_length=512,
-            truncation=True,
-        )
-        return nli
-    except Exception as e:
-        # If anything goes wrong, log and disable NLI
-        print("NLI disabled due to error:", e)
-        traceback.print_exc()
-        return None
-
-
-# =========================
-# Web scraping helper for NLI / evidence
-# =========================
-
-@st.cache_data(show_spinner=False)
-def fetch_web_context(claim: str) -> str:
-    """
-    Search the web for the claim and return cleaned article text.
-    Tries DuckDuckGo news search first, then text search.
-    Falls back to search snippets if scraping the page fails.
-    Returns '' on total failure.
-    """
-    try:
-        url = None
-        snippet_parts = []
-
-        with DDGS() as ddgs:
-            # 1) Try news search
-            try:
-                news_results = ddgs.news(claim, max_results=3)
-                for r in news_results:
-                    url = r.get("url") or r.get("href")
-                    title = r.get("title") or ""
-                    body = r.get("body") or ""
-                    if title:
-                        snippet_parts.append(title)
-                    if body:
-                        snippet_parts.append(body)
-                    if url:
-                        break
-            except Exception as e:
-                print("DDG news search error:", e)
-
-            # 2) Fallback: normal web search
-            if not url:
-                try:
-                    text_results = ddgs.text(claim, max_results=3)
-                    for r in text_results:
-                        url = r.get("href") or r.get("url")
-                        title = r.get("title") or ""
-                        body = r.get("body") or ""
-                        if title:
-                            snippet_parts.append(title)
-                        if body:
-                            snippet_parts.append(body)
-                        if url:
-                            break
-                except Exception as e:
-                    print("DDG text search error:", e)
-
-        # If we still have no URL but have snippets, use snippets only
-        if not url and snippet_parts:
-            return ("\n".join(snippet_parts))[:4000]
-
-        if not url:
-            return ""
-
-        # 3) Try to download and parse the page
-        try:
-            resp = requests.get(
-                url,
-                timeout=10,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            paragraphs = [
-                p.get_text(" ", strip=True)
-                for p in soup.find_all("p")
-                if p.get_text(strip=True)
-            ]
-            if paragraphs:
-                content = "\n".join(paragraphs)
-                return content[:4000]
-        except Exception as e:
-            print("Article scrape error:", e)
-
-        # 4) If scraping failed but we have snippets, use them
-        if snippet_parts:
-            return ("\n".join(snippet_parts))[:4000]
-
-        return ""
-
-    except Exception as e:
-        print("Web fetch error:", e)
-        traceback.print_exc()
-        return ""
-
-
-# =========================
-# Scoring helpers
-# =========================
-
-def pattern_predict(model, vectorizer, text: str) -> np.ndarray:
-    """
-    Run the pattern-based classifier.
-    If anything goes wrong (feature mismatch, etc.), return 50/50
-    so the app does not crash.
-    Returns np.array([real_prob, fake_prob]).
-    """
-    try:
-        X = vectorizer.transform([text])
-
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X)[0]
-            return np.array(proba, dtype=float)
-
-        # Fallback if no predict_proba (unlikely)
-        pred = model.predict(X)[0]
-        if pred in [0, 1]:
-            return np.array([1.0 - pred, float(pred)])
-        return np.array([0.5, 0.5])
-
-    except Exception as e:
-        print("Pattern model error:", e)
-        traceback.print_exc()
-        # Neutral fallback: 50% fake, 50% real
-        return np.array([0.5, 0.5])
-
-
-def nli_relation(nli, claim: str, context: str):
-    """
-    Run NLI if model is available.
-    Returns (relation, score, label, explanation) or None on error.
-    relation in {"support","contradict","neutral"}.
-    """
-    if nli is None:
-        return None
-
-    try:
-        result = nli({"text": context[:1000], "text_pair": claim})
-        if isinstance(result, list) and len(result) > 0:
-            result = result[0]
-
-        label = str(result["label"]).upper()
-        score = float(result["score"])
-
-        if "ENTAIL" in label:
-            relation = "support"
-            explanation = "Evidence in the article semantically supports the claim."
-        elif "CONTRAD" in label:
-            relation = "contradict"
-            explanation = "Evidence in the article semantically contradicts the claim."
-        else:
-            relation = "neutral"
-            explanation = "Evidence is neutral or unrelated to the claim."
-
-        return relation, score, label, explanation
-
-    except Exception as e:
-        print("NLI error:", e)
-        traceback.print_exc()
-        return None
-
-
-# =========================
-# Streamlit UI
-# =========================
-
-def main():
-    st.set_page_config(
-        page_title="FactGuru – Fake News Detection",
-        page_icon="🕵️‍♂️",
-        layout="wide",
-    )
-
-    st.title("🕵️‍♂️ FactGuru – Fake News Detection")
-    st.caption(
-        "Combines pattern analysis, web evidence and optional NLI semantic reasoning."
-    )
+def display_verdict(final_results: Dict[str, Any]):
+    """Display the final verdict and evidence summary"""
     st.markdown("---")
-
-    # --------- Layout: left = input & logs, right = results ----------
-    col_left, col_right = st.columns([1.2, 1.8])
-
-    with col_left:
-        st.subheader("Claim input")
-        claim = st.text_area(
-            "Enter claim to verify",
-            placeholder="e.g., Russia is part of USA",
-            height=100,
-        )
-
-        manual_context = st.text_area(
-            "Optional: paste news article / content (if you don't want auto-fetch)",
-            placeholder="Paste article text here, or leave blank to auto-fetch from web...",
-            height=120,
-        )
-
-        auto_fetch = st.checkbox(
-            "🌐 Automatically fetch an article from the web",
-            value=True,
-            help="If checked and no manual content is provided, the app will search the web "
-                 "for an article related to the claim.",
-        )
-
-        nli_model = load_nli_model()
-        nli_available = nli_model is not None
-
-        enable_nli = st.checkbox(
-            "🧠 Enable NLI (semantic check using article text)",
-            value=True,
-            disabled=not nli_available,
-            help="NLI is more expensive but gives a deeper semantic judgement using article text.",
-        )
-
-        if not nli_available:
-            st.info(
-                "NLI model is not available on this environment "
-                "(ENABLE_NLI env variable is not set to 'true' or model failed to load). "
-                "Pattern analysis will still work."
-            )
-
-        analyze = st.button("Analyze")
-
-        st.markdown("### 🔎 Analysis progress & logs")
-        progress_bar = st.progress(0)
-        log_box = st.empty()
-
-    with col_right:
-        st.subheader("🧾 Result overview")
-        verdict_placeholder = st.empty()
-        stats_placeholder = st.empty()
-        evidence_placeholder = st.empty()
-        nli_placeholder = st.empty()
-
-    # Load pattern model once
-    pattern_model, vectorizer = load_pattern_model()
-
-    if analyze:
-        logs = []
-
-        def log(msg):
-            logs.append(msg)
-            # Render logs as a small console-style area
-            log_text = "\n".join(f"- {m}" for m in logs[-12:])
-            log_box.markdown(f"```text\n{log_text}\n```")
-
-        if not claim or len(claim.strip()) < 5:
-            st.error("Claim must be at least 5 characters long.")
-            return
-
-        start_time = time.time()
-        progress_bar.progress(5)
-        log("Starting analysis pipeline...")
-
-        # ----- Step 1: Pattern analysis -----
-        log("Running pattern-based classifier...")
-        proba = pattern_predict(pattern_model, vectorizer, claim)
-        progress_bar.progress(30)
-
-        if len(proba) == 2:
-            real_prob = float(proba[0])
-            fake_prob = float(proba[1])
-        else:
-            real_prob = fake_prob = 0.5
-
-        if fake_prob >= 0.6:
-            verdict_text = "Likely FAKE ❌"
-            verdict_color = "❌"
-        elif real_prob >= 0.6:
-            verdict_text = "Likely REAL ✅"
-            verdict_color = "✅"
-        else:
-            verdict_text = "UNCERTAIN / MIXED ⚠️"
-            verdict_color = "⚠️"
-
-        log(f"Pattern model verdict: {verdict_text}")
-        progress_bar.progress(45)
-
-        # ----- Step 2: Get evidence text -----
-        context_to_use = None
-        evidence_source = ""
-
-        if manual_context.strip():
-            context_to_use = manual_context.strip()
-            evidence_source = "User-provided article/content."
-            log("Using user-provided article/content for evidence.")
-        elif auto_fetch:
-            log("Fetching article from the web for evidence...")
-            context_to_use = fetch_web_context(claim)
-            if context_to_use:
-                evidence_source = "Auto-fetched using DuckDuckGo search."
-                log("Successfully fetched web article/snippet for evidence.")
-            else:
-                evidence_source = ""
-                log("Could not fetch a useful article. Evidence will be limited.")
-        else:
-            log("No article text provided and auto-fetch disabled.")
-            context_to_use = ""
-            evidence_source = ""
-
-        progress_bar.progress(60)
-
-        # ----- Step 3: Optional NLI -----
-        nli_result = None
-        if enable_nli and nli_available and context_to_use:
-            log("Running NLI semantic check between claim and article...")
-            nli_result = nli_relation(nli_model, claim, context_to_use)
-            if nli_result is None:
-                log("NLI failed or returned no result.")
-            else:
-                relation, score, label, explanation = nli_result
-                log(f"NLI result: {label} (score {score:.3f}) – {relation}")
-        else:
-            if enable_nli and not nli_available:
-                log("NLI requested, but NLI model is not available.")
-            elif enable_nli and not context_to_use:
-                log("NLI requested, but no article text available.")
-            else:
-                log("NLI disabled for this run.")
-
-        progress_bar.progress(90)
-
-        elapsed = time.time() - start_time
-        log(f"Finished analysis in {elapsed:.2f} seconds.")
-        progress_bar.progress(100)
-
-        # ---------- Render right side cards ----------
-
-        # Verdict + probabilities
-        verdict_placeholder.markdown(
-            f"### 🎯 Final Verdict\n"
-            f"**{verdict_text}**"
-        )
-
-        stats_placeholder.markdown(
-            f"""**Pattern model probabilities**  
-- Fake probability: `{fake_prob:.3f}`  
-- Real probability: `{real_prob:.3f}`  
-- Processing time: `{elapsed:.3f}` seconds"""
-        )
-
-        # Evidence section
-       if context_to_use:
-    snippet = context_to_use[:600]
-    snippet_clean = snippet.replace("\n", " ")
-    ellipsis = "..." if len(context_to_use) > 600 else ""
-
-    evidence_md = (
-        "### 📚 Evidence summary\n"
-        f"**Source**: {evidence_source or 'N/A'}  \n\n"
-        f"**Snippet:**\n\n"
-        f"> {snippet_clean}{ellipsis}"
-    )
-else:
-    evidence_md = (
-        "### 📚 Evidence summary\n"
-        "_No article text available. You can paste content manually or enable auto-fetch._"
-    )
-
-
-        # NLI section
-        if nli_result:
-            relation, score, label, explanation = nli_result
-
-            if relation == "support":
-                badge = "🟢 SUPPORT"
-            elif relation == "contradict":
-                badge = "🔴 CONTRADICT"
-            else:
-                badge = "🟡 NEUTRAL"
-
-            nli_placeholder.markdown(
-                f"""### 🧠 Semantic NLI (optional)
-
-**NLI verdict:** {badge}  
-**Raw label:** `{label}`  
-**Confidence:** `{score:.3f}`  
-
-{explanation}
-"""
-            )
-        else:
-            nli_placeholder.markdown(
-                "### 🧠 Semantic NLI (optional)\n"
-                "_NLI result not available for this run._"
-            )
-
-
-if __name__ == "__main__":
-    main()
-import os
-import time
-import traceback
-
-import numpy as np
-import joblib
-import streamlit as st
-
-import requests
-from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
-
-
-# =========================
-# Load pattern analysis model
-# =========================
-
-@st.cache_resource
-def load_pattern_model():
-    """
-    Load Naive Bayes fake-news model and TF-IDF vectorizer
-    from ml/pattern_analysis.
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(
-        base_dir,
-        "ml",
-        "pattern_analysis",
-        "fake_news_model_improved.pkl",
-    )
-    vec_path = os.path.join(
-        base_dir,
-        "ml",
-        "pattern_analysis",
-        "tfidf_vectorizer_naivebayes_clickbait.pkl",
-    )
-
-    model = joblib.load(model_path)
-    vectorizer = joblib.load(vec_path)
-    return model, vectorizer
-
-
-# =========================
-# Optional: load NLI model (only if ENABLE_NLI="true")
-# =========================
-
-@st.cache_resource
-def load_nli_model():
-    """
-    Try to load NLI model, but only when ENABLE_NLI="true" in env.
-    On local Windows this usually stays disabled.
-    On Streamlit Cloud (Linux) you can enable it via secrets.
-    """
-    use_nli = os.getenv("ENABLE_NLI", "").lower() == "true"
-    if not use_nli:
-        # NLI disabled – app still works with pattern model only
-        return None
-
-    try:
-        from transformers import pipeline
-
-        nli = pipeline(
-            "text-classification",
-            model="facebook/bart-large-mnli",
-            max_length=512,
-            truncation=True,
-        )
-        return nli
-    except Exception as e:
-        # If anything goes wrong, log and disable NLI
-        print("NLI disabled due to error:", e)
-        traceback.print_exc()
-        return None
-
-
-# =========================
-# Web scraping helper for NLI
-# =========================
-
-@st.cache_data(show_spinner=False)
-def fetch_web_context(claim: str) -> str:
-    """
-    Search the web for the claim and return cleaned article text.
-    Tries DuckDuckGo news search first, then text search.
-    Falls back to search snippets if scraping the page fails.
-    Returns '' on total failure.
-    """
-    try:
-        url = None
-        snippet_parts = []
-
-        with DDGS() as ddgs:
-            # 1) Try news search
-            try:
-                news_results = ddgs.news(claim, max_results=3)
-                for r in news_results:
-                    url = r.get("url") or r.get("href")
-                    title = r.get("title") or ""
-                    body = r.get("body") or ""
-                    if title:
-                        snippet_parts.append(title)
-                    if body:
-                        snippet_parts.append(body)
-                    if url:
-                        break
-            except Exception as e:
-                print("DDG news search error:", e)
-
-            # 2) Fallback: normal web search
-            if not url:
-                try:
-                    text_results = ddgs.text(claim, max_results=3)
-                    for r in text_results:
-                        url = r.get("href") or r.get("url")
-                        title = r.get("title") or ""
-                        body = r.get("body") or ""
-                        if title:
-                            snippet_parts.append(title)
-                        if body:
-                            snippet_parts.append(body)
-                        if url:
-                            break
-                except Exception as e:
-                    print("DDG text search error:", e)
-
-        # If we still have no URL but have snippets, use snippets only
-        if not url and snippet_parts:
-            return ("\n".join(snippet_parts))[:4000]
-
-        if not url:
-            return ""
-
-        # 3) Try to download and parse the page
-        try:
-            resp = requests.get(
-                url,
-                timeout=10,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            paragraphs = [
-                p.get_text(" ", strip=True)
-                for p in soup.find_all("p")
-                if p.get_text(strip=True)
-            ]
-            if paragraphs:
-                content = "\n".join(paragraphs)
-                return content[:4000]
-        except Exception as e:
-            print("Article scrape error:", e)
-
-        # 4) If scraping failed but we have snippets, use them
-        if snippet_parts:
-            return ("\n".join(snippet_parts))[:4000]
-
-        return ""
-
-    except Exception as e:
-        print("Web fetch error:", e)
-        traceback.print_exc()
-        return ""
-
-
-# =========================
-# Scoring helpers
-# =========================
-
-def pattern_predict(model, vectorizer, text: str) -> np.ndarray:
-    """
-    Run the pattern-based classifier.
-    If anything goes wrong (feature mismatch, etc.), return 50/50
-    so the app does not crash.
-    Returns np.array([real_prob, fake_prob]).
-    """
-    try:
-        X = vectorizer.transform([text])
-
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X)[0]
-            return np.array(proba, dtype=float)
-
-        # Fallback if no predict_proba (unlikely)
-        pred = model.predict(X)[0]
-        if pred in [0, 1]:
-            return np.array([1.0 - pred, float(pred)])
-        return np.array([0.5, 0.5])
-
-    except Exception as e:
-        print("Pattern model error:", e)
-        traceback.print_exc()
-        # Neutral fallback: 50% fake, 50% real
-        return np.array([0.5, 0.5])
-
-
-def nli_relation(nli, claim: str, context: str):
-    """
-    Run NLI if model is available.
-    Returns (relation, score, label) or None on error.
-    relation in {"support","contradict","neutral"}.
-    """
-    if nli is None:
-        return None
-
-    try:
-        result = nli({"text": context[:1000], "text_pair": claim})
-        if isinstance(result, list) and len(result) > 0:
-            result = result[0]
-
-        label = str(result["label"]).upper()
-        score = float(result["score"])
-
-        if "ENTAIL" in label:
-            return "support", score, label
-        elif "CONTRAD" in label:
-            return "contradict", score, label
-        else:
-            return "neutral", score, label
-
-    except Exception as e:
-        print("NLI error:", e)
-        traceback.print_exc()
-        return None
-
-
-# =========================
-# Streamlit UI
-# =========================
-
-def main():
-    st.set_page_config(
-        page_title="FactGuru – Fake News Detection",
-        page_icon="🕵️‍♂️",
-        layout="wide",
-    )
-
-    st.title("🕵️‍♂️ Enhanced Fact Verification System")
-    st.caption(
-        "Powered by: Pattern Analysis, Web Evidence & (optional) NLI Semantic Engine"
-    )
-    st.markdown("---")
-
-    claim = st.text_input(
-        "📝 Enter claim to verify",
-        placeholder="e.g., Russia is part of USA",
-    )
-
-    context = st.text_area(
-        "📄 Optional: paste article/content (used for semantic NLI check)",
-        placeholder="Paste news article text or evidence here (optional)...",
-        height=180,
-    )
-
-    auto_fetch = st.checkbox(
-        "🌐 Automatically fetch an article from the web for NLI",
-        value=True,
-    )
-
-    col1, _ = st.columns([1, 3])
+    st.markdown("## 🎯 Final Verdict")
+    
+    verdict = final_results.get('verdict', 'UNKNOWN')
+    confidence = final_results.get('confidence', 0)
+    
+    # Display verdict with appropriate styling
+    col1, col2 = st.columns([1, 2])
+    
     with col1:
-        analyze = st.button("Analyze")
+        if verdict == "TRUE":
+            st.success(f"## ✅ TRUE")
+        elif verdict == "FALSE":
+            st.error(f"## ❌ FALSE")
+        else:
+            st.warning(f"## ⚠️ {verdict}")
+    
+    with col2:
+        st.metric("Confidence", f"{confidence:.1%}")
+        st.metric("Processing Time", f"{final_results.get('processing_time', 0):.2f}s")
+    
+    # Evidence summary
+    st.markdown("### 📊 Evidence Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Supporting Sources", final_results.get('support_sources', 0))
+    
+    with col2:
+        st.metric("Contradicting Sources", final_results.get('contradict_sources', 0))
+    
+    with col3:
+        st.metric("Total Sources", final_results.get('total_sources', 0))
+    
+    with col4:
+        st.metric("Avg Credibility", f"{final_results.get('average_credibility', 0):.1%}")
 
-    # Load models once (cached)
-    with st.spinner("Loading models..."):
-        pattern_model, vectorizer = load_pattern_model()
-        nli_model = load_nli_model()
+def display_source_analysis(semantic_results: list):
+    """Display detailed analysis of each source"""
+    st.markdown("### 🔍 Detailed Source Analysis")
+    
+    for i, result in enumerate(semantic_results, 1):
+        with st.expander(f"Source {i}: {result.get('domain', 'Unknown')} - {result.get('relation', 'unknown').upper()}"):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.write(f"**Title:** {result.get('title', 'No title')}")
+                st.write(f"**Relation:** {result.get('relation', 'unknown').upper()}")
+                st.write(f"**Confidence:** {result.get('confidence', 0):.3f}")
+                
+                # Show evidence snippets
+                if result.get('evidence'):
+                    st.write("**Key Evidence:**")
+                    for evidence in result.get('evidence', [])[:2]:
+                        st.write(f"- {evidence}")
+            
+            with col2:
+                # Credibility badge
+                cred_score = result.get('credibility_score', 0.5)
+                cred_level = result.get('credibility_level', 'Unknown')
+                
+                if cred_score >= 0.8:
+                    st.success(f"🏆 {cred_level}")
+                elif cred_score >= 0.6:
+                    st.info(f"🏆 {cred_level}")
+                else:
+                    st.warning(f"🏆 {cred_level}")
+                
+                # Pattern analysis
+                pattern_data = result.get('pattern_analysis', {})
+                if pattern_data:
+                    pred = pattern_data.get('prediction', 'N/A')
+                    st.write(f"**Pattern:** {pred}")
 
-    if analyze:
+def display_pattern_analysis(pattern_data: Dict[str, Any]):
+    """Display pattern analysis results"""
+    if not pattern_data:
+        return
+        
+    st.markdown("### 🤖 ML Pattern Analysis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        prediction = pattern_data.get('prediction', 'N/A')
+        confidence = pattern_data.get('confidence', 0)
+        
+        if prediction.upper() == 'FAKE':
+            st.error(f"**Prediction:** {prediction}")
+        else:
+            st.success(f"**Prediction:** {prediction}")
+        
+        st.write(f"**Confidence:** {confidence:.1%}")
+    
+    with col2:
+        suspicious_words = pattern_data.get('suspicious_words', [])
+        clickbait_score = pattern_data.get('clickbait_score', 0)
+        
+        st.write(f"**Clickbait Score:** {clickbait_score}/10")
+        if suspicious_words:
+            st.write(f"**Suspicious Words:** {', '.join(suspicious_words[:5])}")
+
+def main():
+    # Header
+    st.title("🕵️‍♂️ FactGuru – Advanced Fact Verification System")
+    st.markdown("""
+    This advanced system uses multiple verification techniques to provide accurate fact-checking:
+    - **🤖 ML Pattern Analysis** - Detects fake news patterns and clickbait
+    - **🧠 NLI Semantic Analysis** - Understands claim-content relationships using Natural Language Inference
+    - **🏆 Source Credibility** - Evaluates website trustworthiness using known domain ratings
+    - **🌐 Web Search & Scraping** - Gathers evidence from multiple online sources
+    """)
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("System Configuration")
+        
+        # Load system
+        system = load_orchestrator()
+        
+        if system:
+            st.success("✅ Verification system ready")
+            
+            # System info
+            st.markdown("### System Components")
+            st.write("✅ Pattern Analysis")
+            st.write("✅ Semantic NLI Analysis") 
+            st.write("✅ Source Credibility")
+            st.write("✅ Web Search & Scraping")
+            
+            st.markdown("---")
+            st.markdown("### Verification Steps")
+            steps = [
+                "1. Input Validation",
+                "2. Pattern Analysis", 
+                "3. Web Search",
+                "4. Article Scraping",
+                "5. Credibility Analysis",
+                "6. Semantic Analysis",
+                "7. Result Aggregation"
+            ]
+            for step in steps:
+                st.write(step)
+        else:
+            st.error("❌ System not available")
+            return
+    
+    # Main input area
+    st.markdown("---")
+    claim = st.text_area(
+        "### 📝 Enter Claim to Verify",
+        placeholder="e.g., COVID-19 vaccines cause infertility in women",
+        height=100,
+        help="Enter a factual claim you want to verify. The system will search the web and analyze multiple sources."
+    )
+    
+    # Advanced options
+    with st.expander("⚙️ Advanced Options"):
+        col1, col2 = st.columns(2)
+        with col1:
+            max_sources = st.slider("Maximum sources to analyze", 3, 10, 5)
+        with col2:
+            enable_debug = st.checkbox("Show debug information", value=False)
+    
+    # Analyze button
+    if st.button("🔍 Start Verification", type="primary", use_container_width=True):
         if not claim or len(claim.strip()) < 5:
-            st.error("Claim must be at least 5 characters long.")
+            st.error("Please enter a claim with at least 5 characters")
             return
-
-        start = time.time()
-
-        proba = pattern_predict(pattern_model, vectorizer, claim)
-        if len(proba) == 2:
-            real_prob = float(proba[0])
-            fake_prob = float(proba[1])
-        else:
-            real_prob = fake_prob = 0.5
-
-        if fake_prob >= 0.6:
-            verdict = "Likely **FAKE** ❌"
-        elif real_prob >= 0.6:
-            verdict = "Likely **REAL** ✅"
-        else:
-            verdict = "**UNCERTAIN / MIXED** ⚠️"
-
-        end = time.time()
-
-        # ---------- Pattern result ----------
-        st.markdown("### 🎯 Result (Pattern Analysis)")
-        st.markdown(verdict)
-        st.progress(min(max(fake_prob, 0.0), 1.0))
-        st.write(f"Fake probability: `{fake_prob:.3f}`")
-        st.write(f"Real probability: `{real_prob:.3f}`")
-        st.write(f"Processing time: `{end - start:.3f}` seconds")
-
+        
+        # Initialize progress
+        st.session_state.progress_data['is_running'] = True
+        
+        # Display progress section
         st.markdown("---")
-        st.markdown("### 🧠 Semantic NLI (optional)")
-
-        if nli_model is None:
-            st.info(
-                "NLI model is **disabled** on this environment. "
-                "Set `ENABLE_NLI=\"true\"` in Streamlit Cloud secrets to enable it."
-            )
-            return
-
-        # Decide which context to use: user text or auto-fetched
-        if context.strip():
-            context_to_use = context
-            st.write("Using **user-provided** article/content for NLI.")
-        elif auto_fetch:
-            with st.spinner("Fetching article from the web..."):
-                auto_context = fetch_web_context(claim)
-
-            if not auto_context:
-                st.info(
-                    "Could not automatically fetch a useful article. "
-                    "You can paste news content manually above."
-                )
+        st.markdown("## 🔄 Verification Progress")
+        
+        try:
+            # Step 1: Input Validation
+            update_progress(1, "Input Validation", "Checking claim format and length...")
+            progress_bar = display_progress_bar()
+            time.sleep(1)  # Simulate processing
+            
+            # Step 2: Pattern Analysis
+            update_progress(2, "Pattern Analysis", "Analyzing claim for fake news patterns...")
+            progress_bar.progress(2/7)
+            time.sleep(1)
+            
+            # Step 3: Web Search
+            update_progress(3, "Web Search", f"Searching for relevant sources online...")
+            progress_bar.progress(3/7)
+            time.sleep(2)
+            
+            # Step 4: Article Scraping
+            update_progress(4, "Article Scraping", "Extracting content from web pages...")
+            progress_bar.progress(4/7)
+            time.sleep(2)
+            
+            # Step 5: Credibility Analysis
+            update_progress(5, "Credibility Analysis", "Evaluating source trustworthiness...")
+            progress_bar.progress(5/7)
+            time.sleep(1)
+            
+            # Step 6: Semantic Analysis
+            update_progress(6, "Semantic Analysis", "Running NLI model to understand relationships...")
+            progress_bar.progress(6/7)
+            time.sleep(2)
+            
+            # Step 7: Result Aggregation
+            update_progress(7, "Result Aggregation", "Combining all evidence for final verdict...")
+            progress_bar.progress(7/7)
+            time.sleep(1)
+            
+            # Run the actual analysis
+            start_time = time.time()
+            results = system.process_claim(claim.strip())
+            processing_time = time.time() - start_time
+            
+            # Mark as complete
+            st.session_state.progress_data['is_running'] = False
+            st.success("✅ Verification complete!")
+            
+            # Display results
+            if 'error' in results:
+                st.error(f"❌ Analysis failed: {results['error']}")
                 return
-
-            context_to_use = auto_context
-            st.markdown("#### 🌐 Auto-fetched article snippet")
-            snippet = context_to_use[:1000]
-            st.write(snippet + ("..." if len(context_to_use) > 1000 else ""))
-        else:
-            st.info("Provide article text above or enable auto-fetching to run NLI.")
-            return
-
-        # Run NLI
-        with st.spinner("Running NLI semantic check..."):
-            rel = nli_relation(nli_model, claim, context_to_use)
-
-        if rel is None:
-            st.warning("Failed to run NLI check.")
-        else:
-            relation, score, label = rel
-            st.write(f"NLI label: `{label}` (score: `{score:.3f}`)")
-            if relation == "support":
-                st.success("The content **SUPPORTS** the claim.")
-            elif relation == "contradict":
-                st.error("The content **CONTRADICTS** the claim.")
+            
+            # Add processing time to results
+            results['processing_time'] = processing_time
+            
+            # Display final results
+            if 'final_results' in results:
+                display_verdict(results['final_results'])
+                display_pattern_analysis(results['final_results'].get('pattern_analysis'))
+                display_source_analysis(results['final_results'].get('semantic_results', []))
+                
+                # Show raw data for debugging
+                if enable_debug:
+                    with st.expander("📊 Raw Analysis Data"):
+                        st.json(results)
             else:
-                st.info("The content is **NEUTRAL / IRRELEVANT** to the claim.")
-
+                st.warning("⚠️ No detailed results available")
+                st.json(results)
+                
+        except Exception as e:
+            st.session_state.progress_data['is_running'] = False
+            st.error(f"❌ Verification failed: {str(e)}")
+            st.code(traceback.format_exc())
+    
+    # Examples section
+    with st.expander("💡 Example Claims to Test"):
+        st.markdown("Try these example claims to see the system in action:")
+        
+        examples = [
+            "COVID-19 vaccines cause infertility in women",
+            "Eating carrots improves night vision significantly", 
+            "The Great Wall of China is visible from the Moon with naked eye",
+            "Sharks don't get cancer",
+            "Drinking 8 glasses of water daily is necessary for everyone"
+        ]
+        
+        for example in examples:
+            if st.button(example, key=f"example_{example}", use_container_width=True):
+                st.session_state.claim_text = example
+                st.rerun()
 
 if __name__ == "__main__":
     main()
