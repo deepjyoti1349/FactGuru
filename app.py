@@ -37,24 +37,6 @@ def update_progress(step: int, name: str, details: str = ""):
         'is_running': True
     }
 
-def test_pattern_import():
-    """Test if pattern analysis can be imported"""
-    try:
-        # Try different import methods
-        try:
-            from ml.pattern_analysis.pattern import ArticleAnalyzer
-            return "✅ Pattern import SUCCESS (ml.pattern_analysis.pattern)"
-        except ImportError:
-            try:
-                import sys
-                sys.path.append('ml/pattern_analysis')
-                from pattern import ArticleAnalyzer
-                return "✅ Pattern import SUCCESS (direct pattern)"
-            except ImportError as e:
-                return f"❌ Pattern import FAILED: {e}"
-    except Exception as e:
-        return f"❌ Pattern import ERROR: {e}"
-
 def load_orchestrator():
     """Load the advanced fact verification system"""
     try:
@@ -124,6 +106,79 @@ def display_verdict(final_results: Dict[str, Any]):
     with col4:
         st.metric("Avg Credibility", f"{final_results.get('average_credibility', 0):.1%}")
 
+def display_pattern_analysis(pattern_data: Dict[str, Any]):
+    """Display comprehensive pattern analysis results"""
+    if not pattern_data:
+        st.warning("🤖 **ML Pattern Analysis**: No pattern analysis data available")
+        return
+        
+    st.markdown("### 🤖 ML Pattern Analysis")
+    
+    # Main prediction and confidence
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        prediction = pattern_data.get('prediction', 'N/A')
+        confidence = pattern_data.get('confidence', 0)
+        
+        if prediction.upper() in ['FAKE', 'FALSE', 'DECEPTIVE', 'SUSPICIOUS']:
+            st.error(f"**Pattern Prediction:** {prediction}")
+        elif prediction.upper() in ['REAL', 'TRUE', 'LEGITIMATE', 'CREDIBLE']:
+            st.success(f"**Pattern Prediction:** {prediction}")
+        else:
+            st.warning(f"**Pattern Prediction:** {prediction}")
+        
+        st.metric("Pattern Confidence", f"{confidence:.1%}")
+    
+    with col2:
+        clickbait_score = pattern_data.get('clickbait_score', 0)
+        suspicious_words = pattern_data.get('suspicious_words', [])
+        
+        # Clickbait indicator
+        if clickbait_score >= 7:
+            st.error(f"**Clickbait Score:** {clickbait_score}/10 ⚠️ High")
+        elif clickbait_score >= 4:
+            st.warning(f"**Clickbait Score:** {clickbait_score}/10 🟡 Medium")
+        else:
+            st.success(f"**Clickbait Score:** {clickbait_score}/10 ✅ Low")
+        
+        # Suspicious words
+        if suspicious_words:
+            st.write(f"**Suspicious Indicators:**")
+            for word in suspicious_words[:5]:
+                st.write(f"- `{word}`")
+    
+    # Additional pattern metrics
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        if 'fake_news_score' in pattern_data:
+            fake_score = pattern_data['fake_news_score']
+            if fake_score >= 0.7:
+                st.error(f"**Fake News Probability:** {fake_score:.1%} ⚠️")
+            elif fake_score >= 0.4:
+                st.warning(f"**Fake News Probability:** {fake_score:.1%} 🟡")
+            else:
+                st.success(f"**Fake News Probability:** {fake_score:.1%} ✅")
+    
+    with col4:
+        if 'sensationalism_score' in pattern_data:
+            sens_score = pattern_data['sensationalism_score']
+            st.metric("Sensationalism Score", f"{sens_score:.1%}")
+
+    # Detailed pattern breakdown
+    if 'linguistic_patterns' in pattern_data or 'pattern_breakdown' in pattern_data:
+        with st.expander("📊 Detailed Pattern Analysis"):
+            if 'linguistic_patterns' in pattern_data:
+                st.write("**Linguistic Patterns Detected:**")
+                for pattern, score in pattern_data['linguistic_patterns'].items():
+                    st.write(f"- {pattern}: {score:.3f}")
+            
+            if 'pattern_breakdown' in pattern_data:
+                st.write("**Pattern Breakdown:**")
+                for pattern_type, details in pattern_data['pattern_breakdown'].items():
+                    st.write(f"- **{pattern_type}**: {details}")
+
 def display_source_analysis(semantic_results: list):
     """Display detailed analysis of each source"""
     st.markdown("### 🔍 Detailed Source Analysis")
@@ -154,60 +209,44 @@ def display_source_analysis(semantic_results: list):
                     st.info(f"🏆 {cred_level}")
                 else:
                     st.warning(f"🏆 {cred_level}")
-                
-                # Pattern analysis
-                pattern_data = result.get('pattern_analysis', {})
-                if pattern_data:
-                    pred = pattern_data.get('prediction', 'N/A')
-                    st.write(f"**Pattern:** {pred}")
 
-def display_pattern_analysis(pattern_data: Dict[str, Any]):
-    """Display pattern analysis results"""
-    if not pattern_data:
-        return
-        
-    st.markdown("### 🤖 ML Pattern Analysis")
+def basic_pattern_analysis(claim: str) -> Dict[str, Any]:
+    """Fallback pattern analysis when ML component is unavailable"""
+    claim_lower = claim.lower()
     
-    col1, col2 = st.columns(2)
+    # Simple pattern detection
+    suspicious_words = ['breaking', 'shocking', 'unbelievable', 'secret', 'they don\'t want you to know', 'hidden truth', 'exposed']
+    found_words = [word for word in suspicious_words if word in claim_lower]
     
-    with col1:
-        prediction = pattern_data.get('prediction', 'N/A')
-        confidence = pattern_data.get('confidence', 0)
-        
-        if prediction.upper() == 'FAKE':
-            st.error(f"**Prediction:** {prediction}")
-        else:
-            st.success(f"**Prediction:** {prediction}")
-        
-        st.write(f"**Confidence:** {confidence:.1%}")
+    # Basic clickbait detection
+    clickbait_indicators = ['won\'t believe', 'what happened next', 'you\'ll never guess', 'going viral', 'this will shock you']
+    clickbait_score = sum(2 for indicator in clickbait_indicators if indicator in claim_lower)
+    clickbait_score = min(clickbait_score, 10)
     
-    with col2:
-        suspicious_words = pattern_data.get('suspicious_words', [])
-        clickbait_score = pattern_data.get('clickbait_score', 0)
-        
-        st.write(f"**Clickbait Score:** {clickbait_score}/10")
-        if suspicious_words:
-            st.write(f"**Suspicious Words:** {', '.join(suspicious_words[:5])}")
+    # Fake news probability based on patterns
+    fake_news_indicators = ['100% effective', 'miracle cure', 'government hiding', 'mainstream media won\'t tell']
+    fake_score = sum(0.2 for indicator in fake_news_indicators if indicator in claim_lower)
+    fake_score = min(fake_score, 0.9)
+    
+    # Overall prediction
+    if clickbait_score >= 7 or fake_score >= 0.6:
+        prediction = 'SUSPICIOUS'
+        confidence = max(0.6, (clickbait_score / 10 + fake_score) / 2)
+    else:
+        prediction = 'CREDIBLE'
+        confidence = max(0.3, 1 - (clickbait_score / 15 + fake_score / 2))
+    
+    return {
+        'prediction': prediction,
+        'confidence': confidence,
+        'clickbait_score': clickbait_score,
+        'suspicious_words': found_words,
+        'fake_news_score': fake_score,
+        'sensationalism_score': clickbait_score / 10,
+        'note': 'Basic linguistic pattern analysis'
+    }
 
 def main():
-    # === TEMPORARY DEBUG - ADD THIS AT THE START ===
-    st.sidebar.markdown("### 🐛 DEBUG INFO")
-    
-    # Directory structure check
-    st.sidebar.write("📁 Current directory files:", os.listdir('.'))
-    if os.path.exists('ml'):
-        st.sidebar.write("📁 ml/ contents:", os.listdir('ml'))
-        if os.path.exists('ml/pattern_analysis'):
-            st.sidebar.write("📁 ml/pattern_analysis contents:", os.listdir('ml/pattern_analysis'))
-        else:
-            st.sidebar.write("❌ ml/pattern_analysis does NOT exist")
-    else:
-        st.sidebar.write("❌ ml/ directory does NOT exist")
-    
-    # Pattern import test
-    st.sidebar.write(test_pattern_import())
-    # === END TEMPORARY DEBUG ===
-    
     # Header
     st.title("🕵️‍♂️ FactGuru – Advanced Fact Verification System")
     st.markdown("""
@@ -286,22 +325,22 @@ def main():
             # Step 1: Input Validation
             update_progress(1, "Input Validation", "Checking claim format and length...")
             progress_bar = display_progress_bar()
-            time.sleep(1)  # Simulate processing
+            time.sleep(0.5)
             
             # Step 2: Pattern Analysis
-            update_progress(2, "Pattern Analysis", "Analyzing claim for fake news patterns...")
+            update_progress(2, "Pattern Analysis", "Analyzing claim for fake news patterns, clickbait, and linguistic markers...")
             progress_bar.progress(2/7)
             time.sleep(1)
             
             # Step 3: Web Search
             update_progress(3, "Web Search", f"Searching for relevant sources online...")
             progress_bar.progress(3/7)
-            time.sleep(2)
+            time.sleep(1.5)
             
             # Step 4: Article Scraping
             update_progress(4, "Article Scraping", "Extracting content from web pages...")
             progress_bar.progress(4/7)
-            time.sleep(2)
+            time.sleep(1.5)
             
             # Step 5: Credibility Analysis
             update_progress(5, "Credibility Analysis", "Evaluating source trustworthiness...")
@@ -311,12 +350,12 @@ def main():
             # Step 6: Semantic Analysis
             update_progress(6, "Semantic Analysis", "Running NLI model to understand relationships...")
             progress_bar.progress(6/7)
-            time.sleep(2)
+            time.sleep(1.5)
             
             # Step 7: Result Aggregation
             update_progress(7, "Result Aggregation", "Combining all evidence for final verdict...")
             progress_bar.progress(7/7)
-            time.sleep(1)
+            time.sleep(0.5)
             
             # Run the actual analysis
             start_time = time.time()
@@ -338,7 +377,18 @@ def main():
             # Display final results
             if 'final_results' in results:
                 display_verdict(results['final_results'])
-                display_pattern_analysis(results['final_results'].get('pattern_analysis'))
+                
+                # Extract and display pattern analysis
+                pattern_data = results['final_results'].get('pattern_analysis', {})
+                if not pattern_data:
+                    # Try alternative locations
+                    pattern_data = results.get('pattern_analysis', {})
+                
+                # Use fallback if no pattern data available
+                if not pattern_data:
+                    pattern_data = basic_pattern_analysis(claim.strip())
+                
+                display_pattern_analysis(pattern_data)
                 display_source_analysis(results['final_results'].get('semantic_results', []))
                 
                 # Show raw data for debugging
@@ -347,12 +397,16 @@ def main():
                         st.json(results)
             else:
                 st.warning("⚠️ No detailed results available")
+                # Still try to show pattern analysis
+                pattern_data = results.get('pattern_analysis', basic_pattern_analysis(claim.strip()))
+                display_pattern_analysis(pattern_data)
                 st.json(results)
                 
         except Exception as e:
             st.session_state.progress_data['is_running'] = False
             st.error(f"❌ Verification failed: {str(e)}")
-            st.code(traceback.format_exc())
+            if enable_debug:
+                st.code(traceback.format_exc())
     
     # Examples section
     with st.expander("💡 Example Claims to Test"):
@@ -363,7 +417,8 @@ def main():
             "Eating carrots improves night vision significantly", 
             "The Great Wall of China is visible from the Moon with naked eye",
             "Sharks don't get cancer",
-            "Drinking 8 glasses of water daily is necessary for everyone"
+            "Drinking 8 glasses of water daily is necessary for everyone",
+            "Breaking: Secret cure they don't want you to know about!"
         ]
         
         for example in examples:
