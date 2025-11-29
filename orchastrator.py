@@ -3,7 +3,6 @@ import os
 import time
 import math
 from typing import List, Dict, Any, Tuple
-from datetime import datetime
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -24,17 +23,46 @@ except ImportError as e:
     log(f"❌ Import failed: {e}")
     raise
 
-# Import Pattern Analysis module
+# Import Pattern Analysis module - DEBUG VERSION
 try:
-    pattern_analysis_path = pattern_analysis_path = 'ml/pattern_analysis'
-    if pattern_analysis_path not in sys.path:
-        sys.path.append(pattern_analysis_path)
+    # Try different possible paths
+    possible_paths = [
+        'ml/pattern_analysis',
+        './ml/pattern_analysis', 
+        os.path.join(os.path.dirname(__file__), 'ml', 'pattern_analysis')
+    ]
     
-    from pattern import ArticleAnalyzer
-    log("✅ Pattern analysis system ready")
-    PatternAnalyzerAvailable = True
-except ImportError as e:
-    log(f"⚠️ Pattern analysis not available: {e}")
+    PatternAnalyzerAvailable = False
+    ArticleAnalyzer = None
+    
+    for path in possible_paths:
+        log(f"🔍 Trying pattern path: {path}")
+        log(f"🔍 Path exists: {os.path.exists(path)}")
+        
+        if os.path.exists(path):
+            if path not in sys.path:
+                sys.path.append(path)
+                log(f"✅ Added to Python path: {path}")
+            
+            try:
+                from pattern import ArticleAnalyzer
+                log("✅ Pattern analysis system ready")
+                PatternAnalyzerAvailable = True
+                break
+            except ImportError as e:
+                log(f"❌ Import failed from {path}: {e}")
+                continue
+    
+    if not PatternAnalyzerAvailable:
+        log("❌ Could not load pattern analysis from any path")
+        # Show what's actually in ml directory
+        if os.path.exists('ml'):
+            log(f"📁 Contents of ml/: {os.listdir('ml')}")
+            if os.path.exists('ml/pattern_analysis'):
+                log(f"📁 Contents of ml/pattern_analysis/: {os.listdir('ml/pattern_analysis')}")
+
+except Exception as e:
+    log(f"❌ Pattern analysis setup failed: {e}")
     PatternAnalyzerAvailable = False
     ArticleAnalyzer = None
 
@@ -45,7 +73,6 @@ class IntelligentFactGuru:
     - Source credibility assessment
     - Pattern-based fake news detection
     - Web content scraping and analysis
-    - Temporal analysis for recency scoring
     """
     
     def __init__(self):
@@ -59,17 +86,24 @@ class IntelligentFactGuru:
         # Initialize the NLI-enhanced semantic verifier
         self.semantics_verifier = SimpleNLIVerifier()
         
-        # Initialize Pattern Analysis if available
+        # Initialize Pattern Analysis if available - DEBUG VERSION
         self.pattern_analyzer = None
         if PatternAnalyzerAvailable:
             try:
+                log("🔍 Initializing Pattern Analyzer...")
                 self.pattern_analyzer = ArticleAnalyzer()
-                log("✅ Pattern Analyzer initialized")
+                
+                # Test it with a simple claim
+                test_claim = "Test pattern analysis"
+                test_result = self.pattern_analyzer.analyze_article(test_claim, "")
+                log(f"✅ Pattern Analyzer initialized - Test prediction: {test_result.get('prediction', 'N/A')}")
+                log(f"✅ Pattern Test confidence: {test_result.get('confidence', 0)}")
+                
             except Exception as e:
-                log(f"⚠️ Pattern Analyzer initialization failed: {e}")
+                log(f"❌ Pattern Analyzer initialization failed: {e}")
                 self.pattern_analyzer = None
         else:
-            log("⚠️ Pattern Analyzer not available")
+            log("❌ Pattern Analyzer not available")
                 
         log("✅ Intelligent system ready")
 
@@ -101,10 +135,16 @@ class IntelligentFactGuru:
             
             cleaned_claim, _ = self.input_handler.process_input(claim)
 
-            # Step 2: Pattern analysis on the claim itself
+            # Step 2: Pattern analysis on the claim itself - DEBUG VERSION
+            log("🎯 Starting pattern analysis on claim...")
             pattern_analysis = self._analyze_with_patterns(cleaned_claim)
             if pattern_analysis:
                 results["components"]["pattern_analysis"] = pattern_analysis
+                log(f"✅ Pattern analysis completed: {pattern_analysis.get('prediction', 'N/A')}")
+                log(f"✅ Pattern confidence: {pattern_analysis.get('confidence', 0)}")
+            else:
+                log("❌ Pattern analysis returned None - pattern_analyzer might be None")
+                log(f"🔍 self.pattern_analyzer is: {self.pattern_analyzer}")
 
             # Step 3: Search for relevant content online
             search_results = self.search_connector.search_driver(cleaned_claim)
@@ -144,19 +184,10 @@ class IntelligentFactGuru:
                 article_result = self._analyze_article(article, cleaned_claim, credibility_scores)
                 semantic_results.append(article_result)
 
-            # Step 7: Calculate temporal scores based on article recency
-            temporal_scores = self._calculate_temporal_scores(semantic_results)
-            for result in semantic_results:
-                domain = result['domain']
-                if domain in temporal_scores:
-                    result['temporal_score'] = temporal_scores[domain]['temporal_score']
-                    result['publication_date'] = temporal_scores[domain]['publication_date']
-                    result['recency_rank'] = temporal_scores[domain]['recency_rank']
-
-            # Step 8: Aggregate all evidence and determine final verdict
+            # Step 7: Aggregate all evidence and determine final verdict
             verdict_data = self._aggregate_evidence(semantic_results, pattern_analysis, cleaned_claim)
             
-            # Step 9: Compile final results
+            # Step 8: Compile final results
             results["final_results"] = {
                 "verdict": verdict_data['verdict'],
                 "confidence": verdict_data['confidence'],
@@ -169,7 +200,6 @@ class IntelligentFactGuru:
                 "pattern_enhanced": verdict_data.get('pattern_enhanced', False),
                 "nli_enhanced": True,
                 "credibility_enhanced": True,
-                "temporal_enhanced": True,
                 "average_credibility": verdict_data.get('average_credibility', 0.5),
                 "combined_support_prob": verdict_data.get('combined_support_prob', 0.5),
                 "combined_contradict_prob": verdict_data.get('combined_contradict_prob', 0.5)
@@ -181,7 +211,7 @@ class IntelligentFactGuru:
 
             results["processing_time"] = time.time() - start_time
             results["status"] = "completed"
-            log("✅ Enhanced analysis with pattern analysis, credibility scoring, and temporal analysis completed")
+            log("✅ Enhanced analysis with pattern analysis and credibility scoring completed")
             return results
 
         except Exception as e:
@@ -225,11 +255,6 @@ class IntelligentFactGuru:
         # Perform pattern analysis on the article content
         article_pattern_analysis = self._analyze_article_patterns(title, content)
         
-        # Extract publication date if available
-        publication_date = article.get('publish_date', {})
-        raw_date = publication_date.get('raw_date') if publication_date else None
-        formatted_date = publication_date.get('formatted_date') if publication_date else None
-        
         return {
             "domain": domain,
             "title": title,
@@ -242,85 +267,13 @@ class IntelligentFactGuru:
             "nli_analysis": nli_info,
             "credibility_score": credibility_score,
             "credibility_level": self._get_credibility_level(credibility_score),
-            "pattern_analysis": article_pattern_analysis,
-            "publication_date_raw": raw_date,
-            "publication_date_formatted": formatted_date,
-            "base_confidence": semantic_result.confidence  # Store base confidence before temporal adjustment
+            "pattern_analysis": article_pattern_analysis
         }
-
-    def _calculate_temporal_scores(self, semantic_results: List[Dict]) -> Dict[str, Any]:
-        """
-        Calculate temporal scores based on article recency
-        Returns temporal multipliers: [1.15, 1.12, 1.10, 1.08, 1.00] for most recent to oldest
-        """
-        # Filter articles with valid publication dates
-        articles_with_dates = []
-        for result in semantic_results:
-            if result.get('publication_date_formatted'):
-                try:
-                    date_str = result['publication_date_formatted']
-                    # Parse the formatted date
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
-                    articles_with_dates.append({
-                        'domain': result['domain'],
-                        'date': date_obj,
-                        'date_str': date_str,
-                        'result': result
-                    })
-                except (ValueError, TypeError):
-                    continue
-            elif result.get('publication_date_raw'):
-                # Try to parse raw date string
-                try:
-                    date_str = result['publication_date_raw']
-                    # Try common date formats
-                    for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y', '%m/%d/%Y']:
-                        try:
-                            date_obj = datetime.strptime(date_str, fmt)
-                            articles_with_dates.append({
-                                'domain': result['domain'],
-                                'date': date_obj,
-                                'date_str': date_str,
-                                'result': result
-                            })
-                            break
-                        except ValueError:
-                            continue
-                except (ValueError, TypeError):
-                    continue
-        
-        # Sort by date (most recent first)
-        articles_with_dates.sort(key=lambda x: x['date'], reverse=True)
-        
-        # Assign temporal scores based on recency order
-        temporal_multipliers = [1.15, 1.12, 1.10, 1.08, 1.00]
-        temporal_scores = {}
-        
-        for i, article_data in enumerate(articles_with_dates):
-            domain = article_data['domain']
-            multiplier = temporal_multipliers[i] if i < len(temporal_multipliers) else 1.00
-            temporal_scores[domain] = {
-                'temporal_score': multiplier,
-                'publication_date': article_data['date_str'],
-                'recency_rank': i + 1
-            }
-        
-        # For articles without dates, assign neutral score (1.00)
-        for result in semantic_results:
-            domain = result['domain']
-            if domain not in temporal_scores:
-                temporal_scores[domain] = {
-                    'temporal_score': 1.00,
-                    'publication_date': 'Unknown',
-                    'recency_rank': len(articles_with_dates) + 1
-                }
-        
-        log(f"🔍 Temporal analysis: {len(articles_with_dates)} articles with dates, {len(semantic_results) - len(articles_with_dates)} without dates")
-        return temporal_scores
 
     def _analyze_with_patterns(self, claim: str) -> Dict[str, Any]:
         """Analyze claim using pattern recognition for fake news indicators"""
         if not self.pattern_analyzer:
+            log("❌ Pattern analyzer is None - cannot analyze patterns")
             return None
             
         try:
@@ -367,46 +320,39 @@ class IntelligentFactGuru:
     def _aggregate_evidence(self, semantic_results: List[Dict], pattern_analysis: Dict, claim: str) -> Dict:
         """
         Aggregate evidence from all sources using log odds probability combination
-        with temporal scoring enhancement for recent articles
+        
+        This method uses proper Bayesian probability theory to combine evidence
+        from multiple sources, giving more weight to strong evidence and
+        properly handling conflicting information.
         """
         support_probs = []
         contradict_probs = []
         credibility_scores = []
-        temporal_scores_used = []
         
         for result in semantic_results:
-            base_confidence = result['base_confidence']
+            base_confidence = result['confidence']
             credibility_score = result.get('credibility_score', 0.5)
-            temporal_score = result.get('temporal_score', 1.0)
-            
             credibility_scores.append(credibility_score)
-            temporal_scores_used.append(temporal_score)
             
             # Apply credibility adjustment (0.7-1.0 multiplier based on source trust)
             credibility_adjustment = 0.7 + (0.3 * credibility_score)
             adjusted_confidence = base_confidence * credibility_adjustment
             
-            # Apply temporal adjustment (boost for recent articles)
-            temporally_adjusted_confidence = adjusted_confidence * temporal_score
-            
             # Apply pattern analysis adjustment if available
             pattern_data = result.get('pattern_analysis', {})
             if pattern_data and pattern_data.get('prediction') == 'FAKE':
-                temporally_adjusted_confidence *= 0.8  # 20% penalty for fake patterns
+                adjusted_confidence *= 0.8  # 20% penalty for fake patterns
             elif pattern_data and pattern_data.get('prediction') == 'TRUE':
-                temporally_adjusted_confidence *= 1.1  # 10% boost for clean patterns
-            
-            # Store the final adjusted confidence for display
-            result['final_confidence'] = temporally_adjusted_confidence
+                adjusted_confidence *= 1.1  # 10% boost for clean patterns
             
             # Convert to probabilities for evidence combination
             relation = result['relation']
             if relation == 'support':
-                support_probs.append(temporally_adjusted_confidence)
-                contradict_probs.append(1.0 - temporally_adjusted_confidence)
+                support_probs.append(adjusted_confidence)
+                contradict_probs.append(1.0 - adjusted_confidence)
             elif relation == 'contradict':
-                contradict_probs.append(temporally_adjusted_confidence)
-                support_probs.append(1.0 - temporally_adjusted_confidence)
+                contradict_probs.append(adjusted_confidence)
+                support_probs.append(1.0 - adjusted_confidence)
             else:  # irrelevant
                 # Treat irrelevant sources as neutral evidence (0.5 probability)
                 support_probs.append(0.5)
@@ -427,7 +373,6 @@ class IntelligentFactGuru:
         contradict_count = sum(1 for r in semantic_results if r['relation'] == 'contradict')
         irrelevant_count = sum(1 for r in semantic_results if r['relation'] == 'irrelevant')
         avg_credibility = sum(credibility_scores) / len(credibility_scores) if credibility_scores else 0.5
-        avg_temporal = sum(temporal_scores_used) / len(temporal_scores_used) if temporal_scores_used else 1.0
         
         # Apply pattern analysis enhancement to final verdict
         final_verdict, final_confidence = self._enhance_with_pattern_analysis(
@@ -436,7 +381,6 @@ class IntelligentFactGuru:
         
         log(f"🔍 Evidence Aggregation: {support_count} supports, {contradict_count} contradicts")
         log(f"🔍 Combined Probabilities: Support={combined_support_prob:.3f}, Contradict={combined_contradict_prob:.3f}")
-        log(f"🔍 Temporal Analysis: Average temporal boost: {avg_temporal:.3f}x")
         log(f"🔍 Final Verdict: {final_verdict} ({final_confidence:.3f})")
         
         return {
@@ -446,9 +390,7 @@ class IntelligentFactGuru:
             'contradict_count': contradict_count,
             'irrelevant_count': irrelevant_count,
             'pattern_enhanced': pattern_analysis is not None,
-            'temporal_enhanced': True,
             'average_credibility': avg_credibility,
-            'average_temporal_score': avg_temporal,
             'combined_support_prob': combined_support_prob,
             'combined_contradict_prob': combined_contradict_prob
         }
@@ -557,8 +499,6 @@ class IntelligentFactGuru:
             enhancements.append("Pattern Analysis")
         if final.get('credibility_enhanced'):
             enhancements.append("Credibility Scoring")
-        if final.get('temporal_enhanced'):
-            enhancements.append("Temporal Analysis")
         
         if enhancements:
             print(f"🔬 Enhanced with: {', '.join(enhancements)}")
@@ -577,8 +517,6 @@ class IntelligentFactGuru:
         print(f"   ⚪ Irrelevant sources: {final['irrelevant_sources']}")
         print(f"   📚 Total sources analyzed: {final['total_sources']}")
         print(f"   🏆 Average source credibility: {final['average_credibility']:.1%}")
-        if final.get('average_temporal_score'):
-            print(f"   ⏰ Average temporal boost: {final['average_temporal_score']:.2f}x")
 
         # Display Pattern analysis if available
         if final.get('pattern_analysis'):
@@ -593,46 +531,27 @@ class IntelligentFactGuru:
             print(f"   Clickbait Score: {pattern_data.get('clickbait_score', 0)}")
 
         print(f"\n🔍 DETAILED ANALYSIS:")
-        print(f"{'Domain':25} | {'Pub Date':12} | {'Final':6} | {'Verdict':8} | {'Semantic':8} | {'Pattern':8} | {'Cred':6} | {'Temp':5}")
-        print("-" * 95)
-        
         for result in final['semantic_results']:
-            domain = result['domain'][:24]
-            
-            # Safe handling of publication date
-            pub_date = result.get('publication_date_formatted') or result.get('publication_date_raw') or 'Unknown'
-            if pub_date and isinstance(pub_date, str) and len(pub_date) > 10:
-                pub_date = pub_date[:10]  # Show only date part for display
-            elif not pub_date or not isinstance(pub_date, str):
-                pub_date = 'Unknown'
-            
             relation = result['relation'].upper()
             if relation == "SUPPORT":
-                verdict_emoji = "✅"
+                emoji = "✅"
             elif relation == "CONTRADICT":
-                verdict_emoji = "❌"
+                emoji = "❌"
             else:
-                verdict_emoji = "⚪"
+                emoji = "⚪"
                 
-            # Get pattern prediction if available
-            pattern_pred = result.get('pattern_analysis', {}).get('prediction', 'N/A')
-            if pattern_pred == 'TRUE':
-                pattern_display = "TRUE"
-            elif pattern_pred == 'FAKE':
-                pattern_display = "FAKE"
-            else:
-                pattern_display = "N/A"
+            line = f"{emoji} {result['domain']:25} | {relation:12} | Confidence: {result['confidence']:.3f}"
             
-            # Format scores for display
-            final_score = result.get('final_confidence', result['confidence'])
-            semantic_score = result['confidence']
-            cred_score = result.get('credibility_score', 0.5)
-            temp_score = result.get('temporal_score', 1.0)
-            
-            line = (f"{domain:25} | {pub_date:12} | {final_score:5.3f} | "
-                   f"{verdict_emoji} {relation:6} | {semantic_score:8.3f} | "
-                   f"{pattern_display:8} | {cred_score:6.3f} | {temp_score:5.3f}")
-            
+            # Add credibility info
+            if result.get('credibility_score'):
+                cred_level = result.get('credibility_level', 'Unknown')
+                line += f" | 🏆 {cred_level}"
+                
+            # Add pattern info
+            if result.get('pattern_analysis'):
+                pattern_pred = result['pattern_analysis'].get('prediction', '')
+                line += f" | 🔍 {pattern_pred}"
+                
             print(line)
             
         print("=" * 70)
@@ -645,7 +564,6 @@ def main():
     if system.pattern_analyzer:
         enhancements.append("Pattern Analysis")
     enhancements.append("Credibility Engine")
-    enhancements.append("Temporal Analysis")
     
     print(f"   Powered by: {', '.join(enhancements)}")
     print()
