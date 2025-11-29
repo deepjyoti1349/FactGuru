@@ -42,8 +42,6 @@ else:
     log("❌ ml/ directory does not exist!")
 
 # Import Pattern Analysis module - COMPREHENSIVE DEBUG
-import os
-import sys
 
 # Get absolute paths to ensure correct imports
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
