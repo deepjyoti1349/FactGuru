@@ -10,18 +10,15 @@ from enum import Enum
 from typing import Dict, Any, List
 
 # Configure logging
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class ClaimRelation(Enum):
     SUPPORT = "support"
-    CONTRADICT = "contradict"
+    CONTRADICT = "contradict" 
     IRRELEVANT = "irrelevant"
     UNCLEAR = "unclear"
     ERROR = "error"
-
 
 @dataclass
 class VerificationResult:
@@ -36,7 +33,7 @@ class VerificationResult:
     semantic_scores: Dict[str, float] = None
     nli_result: Dict = None
     nli_label: str = ""
-
+    
     def __post_init__(self):
         if self.evidence is None:
             self.evidence = []
@@ -45,170 +42,103 @@ class VerificationResult:
         if self.semantic_scores is None:
             self.semantic_scores = {}
 
-
 class SimpleNLIVerifier:
     """
     Simple semantic verifier using only NLI model
     """
-
+    
     def __init__(self, model_path: str = None):
         self.model = None
-        self.model_path = model_path
+        # Set the path to your local model
+        #self.model_path = model_path or r"F:\project factGuru\codes\web_scrapper\backend\ml\model"
+        self.model_path = "C:\\Users\\hiran\\OneDrive\\Desktop\\proj FactGuru\\web_scrapper\\backend\\ml\\model"
         self._load_nli_model()
-
-    def _download_model_from_hf(self):
-        """Download NLI model from Hugging Face if not exists locally"""
-        try:
-            from huggingface_hub import snapshot_download
-            import os
-            
-            # Your Hugging Face repository
-            repo_id = "rockOn08/factguru-models"
-            
-            # Check if models already exist locally
-            local_model_path = "ml/model"
-            if not os.path.exists(local_model_path) or len(os.listdir(local_model_path)) == 0:
-                logger.info("📥 Downloading NLI model from Hugging Face...")
-                
-                # Download from your Hugging Face repository
-                model_path = snapshot_download(
-                    repo_id=repo_id,
-                    allow_patterns=["*.bin", "*.json", "*.txt"],  # Model files
-                    cache_dir=local_model_path,
-                    local_dir=local_model_path
-                )
-                logger.info("✅ NLI model downloaded successfully from Hugging Face")
-                return model_path
-            else:
-                logger.info("✅ Using locally cached NLI model")
-                return local_model_path
-                
-        except Exception as e:
-            logger.error(f"⚠️ NLI model download failed: {e}")
-            return None
-
+    
     def _load_nli_model(self):
-        """Safely load the NLI model with Hugging Face integration"""
+        """Load the NLI model from local directory"""
         try:
-            # Import transformers lazily so failures (torch DLL, etc.) are caught here
             from transformers import pipeline
-        except Exception as e:
-            logger.error(f"❌ transformers library not available: {e}")
-            logger.warning("⚠️ NLI system disabled — proceeding without semantic verifier.")
-            self.model = None
-            return
-
-        # 1) Try to download from Hugging Face first
-        try:
-            hf_model_path = self._download_model_from_hf()
-            if hf_model_path and os.path.exists(hf_model_path):
-                logger.info(f"🔍 Loading NLI model from: {hf_model_path}")
-                self.model = pipeline(
-                    "text-classification",
-                    model=hf_model_path,
-                    tokenizer=hf_model_path,
-                    max_length=512,
-                    truncation=True,
-                )
-                logger.info("✅ NLI model loaded successfully from Hugging Face")
+            
+            logger.info(f"Loading local NLI model from: {self.model_path}")
+            
+            # Check if the model directory exists
+            if not os.path.exists(self.model_path):
+                logger.error(f"Model path does not exist: {self.model_path}")
+                self.model = None
                 return
-        except Exception as e:
-            logger.error(f"⚠️ Hugging Face model loading failed: {e}")
-
-        # 2) Try local model path if provided
-        if self.model_path and os.path.exists(self.model_path):
-            try:
-                logger.info(f"🔍 Loading NLI model from local path: {self.model_path}")
-                self.model = pipeline(
-                    "text-classification",
-                    model=self.model_path,
-                    tokenizer=self.model_path,
-                    max_length=512,
-                    truncation=True,
-                )
-                logger.info("✅ NLI model loaded successfully from local directory")
-                return
-            except Exception as e:
-                logger.error(f"⚠️ Local NLI model found but failed to load: {e}")
-
-        # 3) Fallback – download a standard NLI model
-        try:
-            logger.info("🌐 Downloading fallback NLI model: facebook/bart-large-mnli ...")
+                
             self.model = pipeline(
                 "text-classification",
-                model="facebook/bart-large-mnli",
+                model=self.model_path,
                 max_length=512,
-                truncation=True,
+                truncation=True
             )
-            logger.info("✅ Fallback NLI model loaded successfully")
+            logger.info("✅ NLI model loaded successfully from local directory!")
+            
         except Exception as e:
-            logger.error(f"❌ Failed to initialize any NLI model (fallback also failed): {e}")
-            logger.warning("⚠️ NLI system disabled — pattern analysis will be used only.")
-            self.model = None
-
+            logger.error(f"Failed to load NLI model from {self.model_path}: {e}")
+            logger.info("Trying to download model as fallback...")
+            try:
+                self.model = pipeline(
+                    "text-classification",
+                    model="roberta-large-mnli",
+                    max_length=512,
+                    truncation=True
+                )
+                logger.info("✅ NLI model downloaded as fallback")
+            except Exception as e2:
+                logger.error(f"Failed to download fallback model: {e2}")
+                self.model = None
+    
     def verify_claim(self, claim: str, content: str) -> VerificationResult:
         """
         Verify claim against content using NLI model only
         """
         start_time = time.time()
-
+        
         try:
             if not claim or not content:
                 return VerificationResult(ClaimRelation.ERROR, 0.0, 0.0)
-
+            
             if not self.model:
-                return VerificationResult(
-                    ClaimRelation.ERROR,
-                    0.0,
-                    0.0,
-                    reasoning=["NLI model not available"],
-                )
-
+                return VerificationResult(ClaimRelation.ERROR, 0.0, 0.0, reasoning=["NLI model not available"])
+            
             logger.info(f"Analyzing claim: '{claim}'")
-
+            
             # Use NLI model to analyze relationship
-            result = self.model(
-                {
-                    "text": content[:1000],  # premise (truncated)
-                    "text_pair": claim,      # hypothesis
-                }
-            )
-
-            # For HF pipelines, single input returns a dict, list returns list[dict]
-            if isinstance(result, list) and len(result) > 0:
-                result = result[0]
-
-            nli_label = result["label"]
-            nli_confidence = float(result["score"])
-
+            result = self.model({
+                "text": content[:1000],  # premise (truncated)
+                "text_pair": claim  # hypothesis
+            })
+            
+            # Process NLI result
+            nli_label = result['label']
+            nli_confidence = result['score']
+            
             # Map NLI labels to our relation types
             if "ENTAIL" in nli_label.upper():
                 relation = ClaimRelation.SUPPORT
-                reasoning = [
-                    f"NLI determined entailment with {nli_confidence:.3f} confidence"]
+                reasoning = [f"NLI determined entailment with {nli_confidence:.3f} confidence"]
                 support_score = nli_confidence
                 contradict_score = 0.0
                 irrelevant_score = 0.0
             elif "CONTRAD" in nli_label.upper():
                 relation = ClaimRelation.CONTRADICT
-                reasoning = [
-                    f"NLI determined contradiction with {nli_confidence:.3f} confidence"]
+                reasoning = [f"NLI determined contradiction with {nli_confidence:.3f} confidence"]
                 support_score = 0.0
                 contradict_score = nli_confidence
                 irrelevant_score = 0.0
             else:  # NEUTRAL
                 relation = ClaimRelation.IRRELEVANT
-                reasoning = [
-                    f"NLI determined neutral relation with {nli_confidence:.3f} confidence"]
+                reasoning = [f"NLI determined neutral relation with {nli_confidence:.3f} confidence"]
                 support_score = 0.0
                 contradict_score = 0.0
                 irrelevant_score = nli_confidence
-
+            
             processing_time = time.time() - start_time
-
-            logger.info(
-                f"Result: {relation.value} (confidence: {nli_confidence:.3f})")
-
+            
+            logger.info(f"Result: {relation.value} (confidence: {nli_confidence:.3f})")
+            
             return VerificationResult(
                 relation=relation,
                 confidence=nli_confidence,
@@ -220,53 +150,42 @@ class SimpleNLIVerifier:
                 irrelevant_score=irrelevant_score,
                 semantic_scores={},  # Empty for simple version
                 nli_result=result,
-                nli_label=nli_label,
+                nli_label=nli_label
             )
-
+            
         except Exception as e:
             logger.error(f"Verification error: {e}")
             processing_time = time.time() - start_time
-            return VerificationResult(
-                ClaimRelation.ERROR,
-                0.0,
-                processing_time,
-                reasoning=[str(e)],
-            )
-
+            return VerificationResult(ClaimRelation.ERROR, 0.0, processing_time, reasoning=[str(e)])
 
 # Backward compatibility
 IntelligentSemanticVerifier = SimpleNLIVerifier
 
-
+# Example usage
 if __name__ == "__main__":
     verifier = SimpleNLIVerifier()
-
+    
     # Test cases
     test_cases = [
-        (
-            "COVID-19 vaccines cause infertility",
-            "Scientific studies show no link between COVID-19 vaccines and infertility",
-        ),
-        ("Vaccines are completely safe",
-         "Some vaccines have rare side effects that need monitoring"),
-        ("Exercise improves heart health",
-         "Studies show that regular exercise improves cardiovascular health"),
+        ("COVID-19 vaccines cause infertility", "Scientific studies show no link between COVID-19 vaccines and infertility"),
+        ("Vaccines are completely safe", "Some vaccines have rare side effects that need monitoring"),
+        ("Exercise improves heart health", "Studies show that regular exercise improves cardiovascular health"),
     ]
-
+    
     print("🧪 Testing Simple NLI Verifier")
     print("=" * 50)
-
+    
     for i, (claim, content) in enumerate(test_cases, 1):
         print(f"\nTest Case {i}:")
         print(f"Claim: {claim}")
-
+        
         result = verifier.verify_claim(claim, content)
-
+        
         print(f"Result: {result.relation.value.upper()}")
         print(f"Confidence: {result.confidence:.3f}")
         print(f"NLI Label: {result.nli_label}")
         print(f"Reasoning: {result.reasoning}")
         print(f"Processing Time: {result.processing_time:.3f}s")
 
-    print(f"\n{'=' * 50}")
+    print(f"\n{'='*50}")
     print("✅ Simple NLI Verifier Test Complete")
