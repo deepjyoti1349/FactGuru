@@ -1,13 +1,8 @@
 streamlit
-scikit-learn
-pandas
 numpy
 joblib
 beautifulsoup4
 requests
-duckduckgo-search
+ddgs
 transformers
 torch
-tldextract
-python-dotenv
-lxml
