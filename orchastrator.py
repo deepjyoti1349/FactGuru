@@ -54,9 +54,6 @@ class IntelligentFactGuru:
         self.credibility_extractor = CredibilityExtractor()
         self.scraper_engine = get_scraper_engine()
         
-        # Download models from Hugging Face first
-        self._download_models_from_hf()
-        
         # Initialize the NLI-enhanced semantic verifier
         self.semantics_verifier = SimpleNLIVerifier()
         
@@ -64,10 +61,6 @@ class IntelligentFactGuru:
         self.pattern_analyzer = None
         if PatternAnalyzerAvailable:
             try:
-                # Make sure pattern models are available
-                if not os.path.exists("ml/pattern_analysis"):
-                    self._download_pattern_models()
-                    
                 self.pattern_analyzer = ArticleAnalyzer()
                 log("✅ Pattern Analyzer initialized")
             except Exception as e:
@@ -77,48 +70,6 @@ class IntelligentFactGuru:
             log("⚠️ Pattern Analyzer not available")
                 
         log("✅ Intelligent system ready")
-
-    def _download_models_from_hf(self):
-        """Download all models from Hugging Face if not exists locally"""
-        try:
-            from huggingface_hub import snapshot_download
-            import os
-            
-            # Check if models already exist locally
-            if not os.path.exists("ml/model") or (os.path.exists("ml/model") and len(os.listdir("ml/model")) == 0):
-                log("📥 Downloading models from Hugging Face...")
-                
-                # Download from your Hugging Face repository
-                model_path = snapshot_download(
-                    repo_id="rockOn08/factguru-models",
-                    cache_dir="ml/",
-                    local_dir="ml/",
-                    force_download=False  # Don't re-download if exists
-                )
-                log("✅ All models downloaded successfully from Hugging Face")
-            else:
-                log("✅ Using locally cached models")
-                
-        except Exception as e:
-            log(f"⚠️ Model download failed: {e}")
-            log("ℹ️ System will use online models as fallback")
-
-    def _download_pattern_models(self):
-        """Download pattern analysis models from Hugging Face"""
-        try:
-            from huggingface_hub import snapshot_download
-            
-            log("📥 Downloading pattern models from Hugging Face...")
-            snapshot_download(
-                repo_id="rockOn08/factguru-models",
-                allow_patterns=["*pattern_analysis*", "*.pkl"],
-                cache_dir="ml/pattern_analysis",
-                local_dir="ml/pattern_analysis",
-                force_download=False
-            )
-            log("✅ Pattern models downloaded successfully")
-        except Exception as e:
-            log(f"❌ Failed to download pattern models: {e}")
 
     def process_claim(self, claim: str) -> Dict[str, Any]:
         """
