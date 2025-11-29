@@ -81,40 +81,80 @@ def load_nli_model():
 def fetch_web_context(claim: str) -> str:
     """
     Search the web for the claim and return cleaned article text.
-    Uses DuckDuckGo search + simple HTML <p> extraction.
-    Returns empty string on failure.
+    Tries DuckDuckGo news search first, then text search.
+    Falls back to search snippets if scraping the page fails.
+    Returns '' on total failure.
     """
     try:
-        # 1) Search DuckDuckGo
         url = None
+        snippet_parts = []
+
         with DDGS() as ddgs:
-            results = ddgs.text(claim, max_results=3)
-            for r in results:
-                url = r.get("href") or r.get("url")
-                if url:
-                    break
+            # 1) Try news search
+            try:
+                news_results = ddgs.news(claim, max_results=3)
+                for r in news_results:
+                    url = r.get("url") or r.get("href")
+                    title = r.get("title") or ""
+                    body = r.get("body") or ""
+                    if title:
+                        snippet_parts.append(title)
+                    if body:
+                        snippet_parts.append(body)
+                    if url:
+                        break
+            except Exception as e:
+                print("DDG news search error:", e)
+
+            # 2) Fallback: normal web search
+            if not url:
+                try:
+                    text_results = ddgs.text(claim, max_results=3)
+                    for r in text_results:
+                        url = r.get("href") or r.get("url")
+                        title = r.get("title") or ""
+                        body = r.get("body") or ""
+                        if title:
+                            snippet_parts.append(title)
+                        if body:
+                            snippet_parts.append(body)
+                        if url:
+                            break
+                except Exception as e:
+                    print("DDG text search error:", e)
+
+        # If we still have no URL but have snippets, use snippets only
+        if not url and snippet_parts:
+            return ("\n".join(snippet_parts))[:4000]
 
         if not url:
             return ""
 
-        # 2) Download the page
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
+        # 3) Try to download and parse the page
+        try:
+            resp = requests.get(
+                url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            paragraphs = [
+                p.get_text(" ", strip=True)
+                for p in soup.find_all("p")
+                if p.get_text(strip=True)
+            ]
+            if paragraphs:
+                content = "\n".join(paragraphs)
+                return content[:4000]
+        except Exception as e:
+            print("Article scrape error:", e)
 
-        # 3) Extract paragraph text
-        soup = BeautifulSoup(resp.text, "html.parser")
-        paragraphs = [
-            p.get_text(" ", strip=True)
-            for p in soup.find_all("p")
-            if p.get_text(strip=True)
-        ]
-        if not paragraphs:
-            return ""
+        # 4) If scraping failed but we have snippets, use them
+        if snippet_parts:
+            return ("\n".join(snippet_parts))[:4000]
 
-        content = "\n".join(paragraphs)
-
-        # Limit size for NLI
-        return content[:4000]
+        return ""
 
     except Exception as e:
         print("Web fetch error:", e)
@@ -195,7 +235,9 @@ def main():
     )
 
     st.title("🕵️‍♂️ Enhanced Fact Verification System")
-    st.caption("Powered by: Pattern Analysis, Web Evidence & (optional) NLI Semantic Engine")
+    st.caption(
+        "Powered by: Pattern Analysis, Web Evidence & (optional) NLI Semantic Engine"
+    )
     st.markdown("---")
 
     claim = st.text_input(
