@@ -3,7 +3,8 @@ import sys
 import os
 import time
 import traceback
-from typing import Dict, Any
+from typing import Dict, Any, List
+import concurrent.futures
 import pandas as pd
 
 # Add the current directory to path
@@ -147,6 +148,8 @@ def display_pattern_analysis(pattern_data: Dict[str, Any]):
             st.write(f"**Suspicious Indicators:**")
             for word in suspicious_words[:5]:
                 st.write(f"- `{word}`")
+        else:
+            st.write("**Suspicious Indicators:** None detected")
     
     # Additional pattern metrics
     col3, col4 = st.columns(2)
@@ -160,11 +163,15 @@ def display_pattern_analysis(pattern_data: Dict[str, Any]):
                 st.warning(f"**Fake News Probability:** {fake_score:.1%} 🟡")
             else:
                 st.success(f"**Fake News Probability:** {fake_score:.1%} ✅")
+        else:
+            st.info("**Fake News Probability:** Not calculated")
     
     with col4:
         if 'sensationalism_score' in pattern_data:
             sens_score = pattern_data['sensationalism_score']
             st.metric("Sensationalism Score", f"{sens_score:.1%}")
+        else:
+            st.info("**Sensationalism Score:** Not calculated")
 
     # Detailed pattern breakdown
     if 'linguistic_patterns' in pattern_data or 'pattern_breakdown' in pattern_data:
@@ -178,9 +185,17 @@ def display_pattern_analysis(pattern_data: Dict[str, Any]):
                 st.write("**Pattern Breakdown:**")
                 for pattern_type, details in pattern_data['pattern_breakdown'].items():
                     st.write(f"- **{pattern_type}**: {details}")
+    
+    # Show note if fallback was used
+    if pattern_data.get('note'):
+        st.info(f"ℹ️ {pattern_data['note']}")
 
 def display_source_analysis(semantic_results: list):
     """Display detailed analysis of each source"""
+    if not semantic_results:
+        st.warning("🔍 **No source analysis available** - Web search may have failed")
+        return
+        
     st.markdown("### 🔍 Detailed Source Analysis")
     
     for i, result in enumerate(semantic_results, 1):
@@ -215,23 +230,34 @@ def basic_pattern_analysis(claim: str) -> Dict[str, Any]:
     claim_lower = claim.lower()
     
     # Simple pattern detection
-    suspicious_words = ['breaking', 'shocking', 'unbelievable', 'secret', 'they don\'t want you to know', 'hidden truth', 'exposed']
+    suspicious_words = ['breaking', 'shocking', 'unbelievable', 'secret', 'they don\'t want you to know', 
+                       'hidden truth', 'exposed', 'miracle', 'instant', 'overnight']
     found_words = [word for word in suspicious_words if word in claim_lower]
     
     # Basic clickbait detection
-    clickbait_indicators = ['won\'t believe', 'what happened next', 'you\'ll never guess', 'going viral', 'this will shock you']
+    clickbait_indicators = ['won\'t believe', 'what happened next', 'you\'ll never guess', 'going viral', 
+                           'this will shock you', 'secret they don\'t want you to know']
     clickbait_score = sum(2 for indicator in clickbait_indicators if indicator in claim_lower)
     clickbait_score = min(clickbait_score, 10)
     
     # Fake news probability based on patterns
-    fake_news_indicators = ['100% effective', 'miracle cure', 'government hiding', 'mainstream media won\'t tell']
+    fake_news_indicators = ['100% effective', 'miracle cure', 'government hiding', 'mainstream media won\'t tell',
+                           'cover-up', 'conspiracy', 'they\'re lying']
     fake_score = sum(0.2 for indicator in fake_news_indicators if indicator in claim_lower)
     fake_score = min(fake_score, 0.9)
+    
+    # Sensationalism detection
+    sensational_words = ['shocking', 'amazing', 'incredible', 'unbelievable', 'astounding']
+    sens_score = sum(0.1 for word in sensational_words if word in claim_lower)
+    sens_score = min(sens_score, 1.0)
     
     # Overall prediction
     if clickbait_score >= 7 or fake_score >= 0.6:
         prediction = 'SUSPICIOUS'
         confidence = max(0.6, (clickbait_score / 10 + fake_score) / 2)
+    elif clickbait_score >= 4 or fake_score >= 0.3:
+        prediction = 'UNCERTAIN'
+        confidence = 0.5
     else:
         prediction = 'CREDIBLE'
         confidence = max(0.3, 1 - (clickbait_score / 15 + fake_score / 2))
@@ -242,16 +268,113 @@ def basic_pattern_analysis(claim: str) -> Dict[str, Any]:
         'clickbait_score': clickbait_score,
         'suspicious_words': found_words,
         'fake_news_score': fake_score,
-        'sensationalism_score': clickbait_score / 10,
-        'note': 'Basic linguistic pattern analysis'
+        'sensationalism_score': sens_score,
+        'note': 'Basic linguistic pattern analysis (ML component unavailable)'
     }
+
+def robust_claim_processing(system, claim: str, max_sources: int = 5):
+    """
+    Process claim with proper error handling for dependent modules
+    Pattern analysis ALWAYS runs, web analysis may fail
+    """
+    results = {
+        'claim': claim,
+        'pattern_analysis': None,
+        'semantic_results': [],
+        'final_results': None,
+        'errors': [],
+        'warnings': []
+    }
+    
+    # Step 1: ALWAYS run pattern analysis first (independent of web)
+    try:
+        update_progress(2, "Pattern Analysis", "Analyzing claim patterns...")
+        
+        # Try to use system's pattern analyzer if available
+        if hasattr(system, 'pattern_analyzer') and system.pattern_analyzer:
+            results['pattern_analysis'] = system.pattern_analyzer.analyze(claim)
+        else:
+            # Fallback to basic pattern analysis
+            results['pattern_analysis'] = basic_pattern_analysis(claim)
+            results['warnings'].append("Using basic pattern analysis (ML component unavailable)")
+            
+    except Exception as e:
+        # Ultimate fallback - basic pattern analysis
+        results['pattern_analysis'] = basic_pattern_analysis(claim)
+        results['errors'].append(f"Pattern analysis failed: {str(e)}")
+        results['warnings'].append("Using fallback pattern analysis")
+    
+    # Step 2: Try web-based analysis (may fail completely)
+    web_success = False
+    try:
+        update_progress(3, "Web Search", "Searching for sources online...")
+        
+        # Try the main processing
+        web_results = system.process_claim(claim)
+        
+        if web_results and 'final_results' in web_results:
+            results.update(web_results)
+            web_success = True
+        else:
+            raise Exception("Web analysis returned no results")
+            
+    except Exception as e:
+        web_success = False
+        error_msg = f"Web analysis failed: {str(e)}"
+        results['errors'].append(error_msg)
+        results['warnings'].append("Limited to pattern analysis only")
+        
+        # Create fallback final results using pattern analysis
+        pattern_conf = results['pattern_analysis'].get('confidence', 0.5)
+        results['final_results'] = {
+            'verdict': 'INCONCLUSIVE',
+            'confidence': pattern_conf * 0.7,  # Reduce confidence for partial analysis
+            'support_sources': 0,
+            'contradict_sources': 0,
+            'total_sources': 0,
+            'average_credibility': 0,
+            'processing_time': 0,
+            'pattern_based_fallback': True,
+            'web_analysis_failed': True
+        }
+    
+    # Step 3: Add processing metadata
+    if web_success and 'final_results' in results:
+        results['final_results']['web_analysis_success'] = True
+        results['final_results']['pattern_analysis_included'] = True
+    elif not web_success:
+        results['final_results']['web_analysis_success'] = False
+        results['final_results']['pattern_analysis_included'] = True
+    
+    return results
+
+def display_system_warnings(results: Dict[str, Any]):
+    """Display warnings about system limitations"""
+    warnings = results.get('warnings', [])
+    errors = results.get('errors', [])
+    
+    if warnings:
+        for warning in warnings:
+            st.warning(f"⚠️ {warning}")
+    
+    if errors:
+        for error in errors:
+            st.error(f"❌ {error}")
+    
+    # Special warning for web failure
+    if results.get('final_results', {}).get('web_analysis_failed'):
+        st.error("""
+        🌐 **Web Verification Unavailable** 
+        Unable to search online sources. Analysis is based on pattern detection only.
+        This may reduce accuracy. Try again later for complete verification.
+        """)
 
 def main():
     # Header
     st.title("🕵️‍♂️ FactGuru – Advanced Fact Verification System")
     st.markdown("""
     This advanced system uses multiple verification techniques to provide accurate fact-checking:
-    - **🤖 ML Pattern Analysis** - Detects fake news patterns and clickbait
+    - **🤖 ML Pattern Analysis** - Detects fake news patterns and clickbait (ALWAYS WORKS)
     - **🧠 NLI Semantic Analysis** - Understands claim-content relationships using Natural Language Inference
     - **🏆 Source Credibility** - Evaluates website trustworthiness using known domain ratings
     - **🌐 Web Search & Scraping** - Gathers evidence from multiple online sources
@@ -269,7 +392,7 @@ def main():
             
             # System info
             st.markdown("### System Components")
-            st.write("✅ Pattern Analysis")
+            st.write("✅ Pattern Analysis (Always Available)")
             st.write("✅ Semantic NLI Analysis") 
             st.write("✅ Source Credibility")
             st.write("✅ Web Search & Scraping")
@@ -297,7 +420,7 @@ def main():
         "### 📝 Enter Claim to Verify",
         placeholder="e.g., COVID-19 vaccines cause infertility in women",
         height=100,
-        help="Enter a factual claim you want to verify. The system will search the web and analyze multiple sources."
+        help="Enter a factual claim you want to verify. Pattern analysis will always work, even if web search fails."
     )
     
     # Advanced options
@@ -327,81 +450,42 @@ def main():
             progress_bar = display_progress_bar()
             time.sleep(0.5)
             
-            # Step 2: Pattern Analysis
-            update_progress(2, "Pattern Analysis", "Analyzing claim for fake news patterns, clickbait, and linguistic markers...")
-            progress_bar.progress(2/7)
-            time.sleep(1)
+            # Use robust processing that ensures pattern analysis always works
+            start_time = time.time()
+            results = robust_claim_processing(system, claim.strip(), max_sources)
+            processing_time = time.time() - start_time
             
-            # Step 3: Web Search
-            update_progress(3, "Web Search", f"Searching for relevant sources online...")
-            progress_bar.progress(3/7)
-            time.sleep(1.5)
+            # Update processing time
+            if 'final_results' in results:
+                results['final_results']['processing_time'] = processing_time
             
-            # Step 4: Article Scraping
-            update_progress(4, "Article Scraping", "Extracting content from web pages...")
-            progress_bar.progress(4/7)
-            time.sleep(1.5)
-            
-            # Step 5: Credibility Analysis
-            update_progress(5, "Credibility Analysis", "Evaluating source trustworthiness...")
-            progress_bar.progress(5/7)
-            time.sleep(1)
-            
-            # Step 6: Semantic Analysis
-            update_progress(6, "Semantic Analysis", "Running NLI model to understand relationships...")
-            progress_bar.progress(6/7)
-            time.sleep(1.5)
-            
-            # Step 7: Result Aggregation
+            # Step 7: Complete
             update_progress(7, "Result Aggregation", "Combining all evidence for final verdict...")
             progress_bar.progress(7/7)
             time.sleep(0.5)
-            
-            # Run the actual analysis
-            start_time = time.time()
-            results = system.process_claim(claim.strip())
-            processing_time = time.time() - start_time
             
             # Mark as complete
             st.session_state.progress_data['is_running'] = False
             st.success("✅ Verification complete!")
             
-            # Display results
-            if 'error' in results:
-                st.error(f"❌ Analysis failed: {results['error']}")
-                return
-            
-            # Add processing time to results
-            results['processing_time'] = processing_time
+            # Display system warnings first
+            display_system_warnings(results)
             
             # Display final results
-            if 'final_results' in results:
-                display_verdict(results['final_results'])
-                
-                # Extract and display pattern analysis
-                pattern_data = results['final_results'].get('pattern_analysis', {})
-                if not pattern_data:
-                    # Try alternative locations
-                    pattern_data = results.get('pattern_analysis', {})
-                
-                # Use fallback if no pattern data available
-                if not pattern_data:
-                    pattern_data = basic_pattern_analysis(claim.strip())
-                
-                display_pattern_analysis(pattern_data)
-                display_source_analysis(results['final_results'].get('semantic_results', []))
-                
-                # Show raw data for debugging
-                if enable_debug:
-                    with st.expander("📊 Raw Analysis Data"):
-                        st.json(results)
+            display_verdict(results['final_results'])
+            display_pattern_analysis(results['pattern_analysis'])
+            
+            # Only show source analysis if web was successful
+            if results.get('final_results', {}).get('web_analysis_success'):
+                display_source_analysis(results.get('semantic_results', []))
             else:
-                st.warning("⚠️ No detailed results available")
-                # Still try to show pattern analysis
-                pattern_data = results.get('pattern_analysis', basic_pattern_analysis(claim.strip()))
-                display_pattern_analysis(pattern_data)
-                st.json(results)
+                st.info("🔍 **Source Analysis**: Not available - web search failed")
                 
+            # Show raw data for debugging
+            if enable_debug:
+                with st.expander("📊 Raw Analysis Data"):
+                    st.json(results)
+                    
         except Exception as e:
             st.session_state.progress_data['is_running'] = False
             st.error(f"❌ Verification failed: {str(e)}")
@@ -417,8 +501,9 @@ def main():
             "Eating carrots improves night vision significantly", 
             "The Great Wall of China is visible from the Moon with naked eye",
             "Sharks don't get cancer",
-            "Drinking 8 glasses of water daily is necessary for everyone",
-            "Breaking: Secret cure they don't want you to know about!"
+            "Breaking: Secret cure they don't want you to know about!",
+            "You won't believe what this celebrity did overnight!",
+            "Government hiding alien technology from public"
         ]
         
         for example in examples:
