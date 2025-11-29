@@ -4,12 +4,19 @@ import time
 import math
 from typing import List, Dict, Any, Tuple
 
+# DEBUG: STARTUP LOGGING
+print("🚀 STARTING ORCHESTRATOR.PY - DEBUG MODE")
+print(f"📁 Current directory: {os.getcwd()}")
+print(f"📁 Files in current directory: {os.listdir('.')}")
+
 sys.path.append(os.path.dirname(__file__))
 
 def log(msg: str):
     """Log messages with timestamp for debugging and monitoring"""
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     print(f"{ts} - {msg}")
+
+log("🔍 Starting imports...")
 
 # Import core system components
 try:
@@ -23,17 +30,29 @@ except ImportError as e:
     log(f"❌ Import failed: {e}")
     raise
 
-# Import Pattern Analysis module - DEBUG VERSION
+# DEBUG: CHECK DIRECTORY STRUCTURE
+log("🔍 Checking ml directory structure...")
+if os.path.exists('ml'):
+    log(f"📁 ml/ exists. Contents: {os.listdir('ml')}")
+    if os.path.exists('ml/pattern_analysis'):
+        log(f"📁 ml/pattern_analysis exists. Contents: {os.listdir('ml/pattern_analysis')}")
+    else:
+        log("❌ ml/pattern_analysis does not exist!")
+else:
+    log("❌ ml/ directory does not exist!")
+
+# Import Pattern Analysis module - COMPREHENSIVE DEBUG
+log("🔍 Starting pattern analysis import...")
+PatternAnalyzerAvailable = False
+ArticleAnalyzer = None
+
 try:
-    # Try different possible paths
+    # Try multiple paths
     possible_paths = [
         'ml/pattern_analysis',
-        './ml/pattern_analysis', 
+        './ml/pattern_analysis',
         os.path.join(os.path.dirname(__file__), 'ml', 'pattern_analysis')
     ]
-    
-    PatternAnalyzerAvailable = False
-    ArticleAnalyzer = None
     
     for path in possible_paths:
         log(f"🔍 Trying pattern path: {path}")
@@ -46,25 +65,24 @@ try:
             
             try:
                 from pattern import ArticleAnalyzer
-                log("✅ Pattern analysis system ready")
+                log("✅ Pattern analysis import SUCCESSFUL!")
                 PatternAnalyzerAvailable = True
+                log(f"✅ Using path: {path}")
                 break
             except ImportError as e:
                 log(f"❌ Import failed from {path}: {e}")
+                # Show what's in the directory
+                if os.path.exists(path):
+                    log(f"📁 Files in {path}: {os.listdir(path)}")
                 continue
+        else:
+            log(f"❌ Path does not exist: {path}")
     
     if not PatternAnalyzerAvailable:
-        log("❌ Could not load pattern analysis from any path")
-        # Show what's actually in ml directory
-        if os.path.exists('ml'):
-            log(f"📁 Contents of ml/: {os.listdir('ml')}")
-            if os.path.exists('ml/pattern_analysis'):
-                log(f"📁 Contents of ml/pattern_analysis/: {os.listdir('ml/pattern_analysis')}")
-
+        log("❌ Could not load pattern analysis from any path!")
+        
 except Exception as e:
     log(f"❌ Pattern analysis setup failed: {e}")
-    PatternAnalyzerAvailable = False
-    ArticleAnalyzer = None
 
 class IntelligentFactGuru:
     """
@@ -84,9 +102,10 @@ class IntelligentFactGuru:
         self.scraper_engine = get_scraper_engine()
         
         # Initialize the NLI-enhanced semantic verifier
+        log("🔍 Initializing semantic verifier...")
         self.semantics_verifier = SimpleNLIVerifier()
         
-        # Initialize Pattern Analysis if available - DEBUG VERSION
+        # Initialize Pattern Analysis if available - WITH DEBUG
         self.pattern_analyzer = None
         if PatternAnalyzerAvailable:
             try:
@@ -95,15 +114,16 @@ class IntelligentFactGuru:
                 
                 # Test it with a simple claim
                 test_claim = "Test pattern analysis"
+                log("🔍 Testing pattern analyzer...")
                 test_result = self.pattern_analyzer.analyze_article(test_claim, "")
-                log(f"✅ Pattern Analyzer initialized - Test prediction: {test_result.get('prediction', 'N/A')}")
+                log(f"✅ Pattern Analyzer TEST SUCCESS - Prediction: {test_result.get('prediction', 'N/A')}")
                 log(f"✅ Pattern Test confidence: {test_result.get('confidence', 0)}")
                 
             except Exception as e:
                 log(f"❌ Pattern Analyzer initialization failed: {e}")
                 self.pattern_analyzer = None
         else:
-            log("❌ Pattern Analyzer not available")
+            log("❌ Pattern Analyzer not available - PatternAnalyzerAvailable is False")
                 
         log("✅ Intelligent system ready")
 
@@ -127,6 +147,7 @@ class IntelligentFactGuru:
 
         try:
             # Step 1: Input validation and cleaning
+            log("🔍 Step 1: Input validation")
             is_valid, error = self.input_handler.validate_claim(claim)
             if not is_valid:
                 results["error"] = f"Validation failed: {error}"
@@ -135,18 +156,21 @@ class IntelligentFactGuru:
             
             cleaned_claim, _ = self.input_handler.process_input(claim)
 
-            # Step 2: Pattern analysis on the claim itself - DEBUG VERSION
-            log("🎯 Starting pattern analysis on claim...")
+            # Step 2: Pattern analysis on the claim itself - COMPREHENSIVE DEBUG
+            log("🎯 Step 2: Pattern analysis on claim")
+            log(f"🔍 self.pattern_analyzer is: {self.pattern_analyzer}")
             pattern_analysis = self._analyze_with_patterns(cleaned_claim)
             if pattern_analysis:
                 results["components"]["pattern_analysis"] = pattern_analysis
                 log(f"✅ Pattern analysis completed: {pattern_analysis.get('prediction', 'N/A')}")
                 log(f"✅ Pattern confidence: {pattern_analysis.get('confidence', 0)}")
             else:
-                log("❌ Pattern analysis returned None - pattern_analyzer might be None")
-                log(f"🔍 self.pattern_analyzer is: {self.pattern_analyzer}")
+                log("❌ Pattern analysis returned None")
+                log(f"🔍 Pattern analyzer available: {PatternAnalyzerAvailable}")
+                log(f"🔍 Pattern analyzer object: {self.pattern_analyzer}")
 
             # Step 3: Search for relevant content online
+            log("🔍 Step 3: Web search")
             search_results = self.search_connector.search_driver(cleaned_claim)
             if not search_results:
                 results["error"] = "No search results found"
@@ -154,6 +178,7 @@ class IntelligentFactGuru:
                 return results
 
             # Step 4: Scrape article content from search results
+            log("🔍 Step 4: Article scraping")
             urls = [result.get('url', '') for result in search_results]
             scraped_articles = self.scraper_engine.scrape_parallel(urls)
             
@@ -170,7 +195,7 @@ class IntelligentFactGuru:
                 results["status"] = "failed"
                 return results
 
-            log(f"Analyzing {len(successful_articles)} articles with NLI-enhanced semantics...")
+            log(f"🔍 Step 5: Analyzing {len(successful_articles)} articles")
 
             # Step 5: Assess source credibility
             domains = [article.get('domain', 'unknown') for article in successful_articles]
@@ -185,6 +210,7 @@ class IntelligentFactGuru:
                 semantic_results.append(article_result)
 
             # Step 7: Aggregate all evidence and determine final verdict
+            log("🔍 Step 7: Aggregating evidence")
             verdict_data = self._aggregate_evidence(semantic_results, pattern_analysis, cleaned_claim)
             
             # Step 8: Compile final results
@@ -278,6 +304,7 @@ class IntelligentFactGuru:
             
         try:
             # Using claim as both title and content for pattern analysis
+            log(f"🔍 Running pattern analysis on: {claim}")
             pattern_results = self.pattern_analyzer.analyze_article(claim, "")  
             log(f"🔍 Pattern Analysis completed: {pattern_results['prediction']}")
             return pattern_results
