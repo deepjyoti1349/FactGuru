@@ -407,21 +407,23 @@ def main():
         )
 
         # Evidence section
-        if context_to_use:
-            snippet = context_to_use[:600]
-            evidence_md = (
-                "### 📚 Evidence summary\n"
-                f"**Source**: {evidence_source or 'N/A'}  \n\n"
-                f"**Snippet:**\n\n"
-                f"> {snippet.replace('\n', ' ')}{'...' if len(context_to_use) > 600 else ''}"
-            )
-        else:
-            evidence_md = (
-                "### 📚 Evidence summary\n"
-                "_No article text available. You can paste content manually or enable auto-fetch._"
-            )
+       if context_to_use:
+    snippet = context_to_use[:600]
+    snippet_clean = snippet.replace("\n", " ")
+    ellipsis = "..." if len(context_to_use) > 600 else ""
 
-        evidence_placeholder.markdown(evidence_md)
+    evidence_md = (
+        "### 📚 Evidence summary\n"
+        f"**Source**: {evidence_source or 'N/A'}  \n\n"
+        f"**Snippet:**\n\n"
+        f"> {snippet_clean}{ellipsis}"
+    )
+else:
+    evidence_md = (
+        "### 📚 Evidence summary\n"
+        "_No article text available. You can paste content manually or enable auto-fetch._"
+    )
+
 
         # NLI section
         if nli_result:
