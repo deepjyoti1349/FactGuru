@@ -40,7 +40,7 @@ def update_progress(step: int, name: str, details: str = ""):
 def load_orchestrator():
     """Load the advanced fact verification system"""
     try:
-       from orchastrator import IntelligentFactGuru  # ✅ CORRECT
+        from orchastrator import IntelligentFactGuru  # ✅ CORRECT - FIXED INDENTATION
         system = IntelligentFactGuru()
         return system
     except Exception as e:
