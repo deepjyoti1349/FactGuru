@@ -55,28 +55,28 @@ class SimpleNLIVerifier:
         self._load_nli_model()
 
     def _load_nli_model(self):
-    """Load the NLI model - online only"""
-    try:
-        from transformers import pipeline
-        import torch
-        
-        logger.info("🌐 Loading online NLI model: facebook/bart-large-mnli...")
-        
-        # Fix: Explicitly specify device and don't use device_map
-        self.model = pipeline(
-            "text-classification",
-            model="facebook/bart-large-mnli",
-            max_length=512,
-            truncation=True,
-            device=-1  # Force CPU usage (-1 = CPU, 0 = GPU)
-        )
-        
-        logger.info("✅ Online NLI model loaded successfully")
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to load NLI model: {e}")
-        logger.warning("⚠️ NLI system disabled")
-        self.model = None
+        """Load the NLI model - online only"""
+        try:
+            from transformers import pipeline
+            import torch
+            
+            logger.info("🌐 Loading online NLI model: facebook/bart-large-mnli...")
+            
+            # Fix: Explicitly specify device and don't use device_map
+            self.model = pipeline(
+                "text-classification",
+                model="facebook/bart-large-mnli",
+                max_length=512,
+                truncation=True,
+                device=-1  # Force CPU usage (-1 = CPU, 0 = GPU)
+            )
+            
+            logger.info("✅ Online NLI model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load NLI model: {e}")
+            logger.warning("⚠️ NLI system disabled")
+            self.model = None
 
     def verify_claim(self, claim: str, content: str) -> VerificationResult:
         """
