@@ -112,6 +112,7 @@ if PatternAnalyzerAvailable:
     log("✅ PATTERN ANALYSIS READY")
 else:
     log("❌ PATTERN ANALYSIS NOT AVAILABLE")
+
 class IntelligentFactGuru:
     """
     Main fact verification system that combines multiple analysis techniques:
@@ -184,9 +185,8 @@ class IntelligentFactGuru:
             
             cleaned_claim, _ = self.input_handler.process_input(claim)
 
-            # Step 2: Pattern analysis on the claim itself - COMPREHENSIVE DEBUG
+            # Step 2: Pattern analysis on the claim itself - ALWAYS RUNS
             log("🎯 Step 2: Pattern analysis on claim")
-            log(f"🔍 self.pattern_analyzer is: {self.pattern_analyzer}")
             pattern_analysis = self._analyze_with_patterns(cleaned_claim)
             if pattern_analysis:
                 results["components"]["pattern_analysis"] = pattern_analysis
@@ -203,6 +203,10 @@ class IntelligentFactGuru:
             if not search_results:
                 results["error"] = "No search results found"
                 results["status"] = "failed"
+                # But we still return pattern analysis if available
+                if pattern_analysis:
+                    results["pattern_analysis"] = pattern_analysis
+                    results["final_results"] = self._create_pattern_only_results(cleaned_claim, pattern_analysis)
                 return results
 
             # Step 4: Scrape article content from search results
@@ -221,6 +225,10 @@ class IntelligentFactGuru:
             if not successful_articles:
                 results["error"] = "No articles could be scraped with sufficient content"
                 results["status"] = "failed"
+                # But we still return pattern analysis if available
+                if pattern_analysis:
+                    results["pattern_analysis"] = pattern_analysis
+                    results["final_results"] = self._create_pattern_only_results(cleaned_claim, pattern_analysis)
                 return results
 
             log(f"🔍 Step 5: Analyzing {len(successful_articles)} articles")
@@ -272,6 +280,162 @@ class IntelligentFactGuru:
             log(f"❌ Processing error: {e}")
             results["error"] = str(e)
             results["status"] = "failed"
+            # Even on total failure, try to return basic pattern analysis
+            try:
+                pattern_analysis = self._basic_pattern_analysis(claim)
+                results["pattern_analysis"] = pattern_analysis
+                results["final_results"] = self._create_pattern_only_results(claim, pattern_analysis)
+            except:
+                pass
+            return results
+
+    def process_claim_robust(self, claim: str, max_sources: int = 5) -> Dict[str, Any]:
+        """
+        ROBUST claim processing that ensures pattern analysis ALWAYS works
+        even if web/NLI analysis fails completely
+        
+        Args:
+            claim: The factual claim to verify
+            max_sources: Maximum number of sources to analyze
+            
+        Returns:
+            Dictionary containing verification results with confidence scores
+        """
+        start_time = time.time()
+        results = {
+            "claim": claim,
+            "timestamp": start_time,
+            "components": {},
+            "status": "processing",
+            "errors": [],
+            "warnings": []
+        }
+
+        try:
+            # Step 1: Input validation and cleaning
+            log("🔍 Step 1: Input validation")
+            is_valid, error = self.input_handler.validate_claim(claim)
+            if not is_valid:
+                results["error"] = f"Validation failed: {error}"
+                results["status"] = "failed"
+                return results
+            
+            cleaned_claim, _ = self.input_handler.process_input(claim)
+
+            # Step 2: Pattern analysis on the claim itself - ALWAYS RUNS FIRST
+            log("🎯 Step 2: Pattern analysis on claim (ALWAYS RUNS)")
+            pattern_analysis = self._analyze_with_patterns_robust(cleaned_claim)
+            results["pattern_analysis"] = pattern_analysis
+            log(f"✅ Pattern analysis completed: {pattern_analysis.get('prediction', 'N/A')}")
+
+            # Step 3: Try web-based analysis (may fail completely)
+            web_success = False
+            semantic_results = []
+            try:
+                log("🔍 Step 3: Web search and analysis")
+                search_results = self.search_connector.search_driver(cleaned_claim)
+                
+                if search_results:
+                    urls = [result.get('url', '') for result in search_results]
+                    scraped_articles = self.scraper_engine.scrape_parallel(urls)
+                    
+                    # Filter for successful articles
+                    successful_articles = []
+                    for article in scraped_articles:
+                        if (isinstance(article, dict) and 
+                            article.get('status') in ['success', 'successful'] and
+                            article.get('content') and len(article.get('content', '')) > 200):
+                            successful_articles.append(article)
+
+                    if successful_articles:
+                        # Assess source credibility
+                        domains = [article.get('domain', 'unknown') for article in successful_articles]
+                        credibility_results = self.credibility_extractor.analyze_multiple_websites(domains)
+                        credibility_scores = {result['website']: result['score'] for result in credibility_results}
+                        
+                        # Perform semantic analysis on each article
+                        for article in successful_articles:
+                            article_result = self._analyze_article(article, cleaned_claim, credibility_scores)
+                            semantic_results.append(article_result)
+                        
+                        web_success = True
+                        log(f"✅ Web analysis successful: {len(semantic_results)} articles analyzed")
+                    else:
+                        raise Exception("No articles could be scraped with sufficient content")
+                else:
+                    raise Exception("No search results found")
+                    
+            except Exception as e:
+                web_success = False
+                error_msg = f"Web analysis failed: {str(e)}"
+                results["errors"].append(error_msg)
+                results["warnings"].append("Limited to pattern analysis only")
+                log(f"❌ {error_msg}")
+
+            # Step 4: Aggregate results based on what worked
+            log("🔍 Step 4: Aggregating evidence")
+            if web_success and semantic_results:
+                # Full analysis with both pattern and web
+                verdict_data = self._aggregate_evidence(semantic_results, pattern_analysis, cleaned_claim)
+                results["final_results"] = {
+                    "verdict": verdict_data['verdict'],
+                    "confidence": verdict_data['confidence'],
+                    "support_sources": verdict_data['support_count'],
+                    "contradict_sources": verdict_data['contradict_count'],
+                    "irrelevant_sources": verdict_data['irrelevant_count'],
+                    "total_sources": len(semantic_results),
+                    "semantic_results": semantic_results,
+                    "analysis_method": "FULL_ANALYSIS",
+                    "pattern_enhanced": True,
+                    "nli_enhanced": True,
+                    "credibility_enhanced": True,
+                    "average_credibility": verdict_data.get('average_credibility', 0.5),
+                    "web_analysis_success": True,
+                    "pattern_analysis_included": True
+                }
+            else:
+                # Pattern analysis only (web failed)
+                verdict_data = self._create_pattern_based_verdict(cleaned_claim, pattern_analysis)
+                results["final_results"] = {
+                    "verdict": verdict_data['verdict'],
+                    "confidence": verdict_data['confidence'],
+                    "support_sources": 0,
+                    "contradict_sources": 0,
+                    "irrelevant_sources": 0,
+                    "total_sources": 0,
+                    "semantic_results": [],
+                    "analysis_method": "PATTERN_ANALYSIS_ONLY",
+                    "pattern_enhanced": True,
+                    "nli_enhanced": False,
+                    "credibility_enhanced": False,
+                    "average_credibility": 0,
+                    "web_analysis_success": False,
+                    "pattern_analysis_included": True,
+                    "pattern_based_fallback": True
+                }
+
+            # Always include pattern analysis in final results
+            results["final_results"]["pattern_analysis"] = pattern_analysis
+            results["processing_time"] = time.time() - start_time
+            results["status"] = "completed"
+            
+            log("✅ Robust analysis completed")
+            if not web_success:
+                log("⚠️  Analysis completed with pattern analysis only (web failed)")
+            
+            return results
+
+        except Exception as e:
+            log(f"❌ Robust processing error: {e}")
+            results["error"] = str(e)
+            results["status"] = "failed"
+            # Ultimate fallback - basic pattern analysis
+            try:
+                pattern_analysis = self._basic_pattern_analysis(claim)
+                results["pattern_analysis"] = pattern_analysis
+                results["final_results"] = self._create_pattern_only_results(claim, pattern_analysis)
+            except:
+                pass
             return results
 
     def _analyze_article(self, article: Dict, claim: str, credibility_scores: Dict) -> Dict[str, Any]:
@@ -341,6 +505,24 @@ class IntelligentFactGuru:
             log(f"⚠️ Pattern analysis failed: {e}")
             return None
 
+    def _analyze_with_patterns_robust(self, claim: str) -> Dict[str, Any]:
+        """
+        ROBUST pattern analysis that ALWAYS returns results
+        Uses ML pattern analyzer if available, otherwise uses basic analysis
+        """
+        # Try ML pattern analyzer first
+        if self.pattern_analyzer:
+            try:
+                log(f"🔍 Running ML pattern analysis on: {claim}")
+                pattern_results = self.pattern_analyzer.analyze_article(claim, "")
+                log(f"✅ ML Pattern Analysis completed: {pattern_results['prediction']}")
+                return pattern_results
+            except Exception as e:
+                log(f"⚠️ ML pattern analysis failed, using basic: {e}")
+        
+        # Fallback to basic pattern analysis
+        return self._basic_pattern_analysis(claim)
+
     def _analyze_article_patterns(self, title: str, content: str) -> Dict[str, Any]:
         """Analyze individual article for suspicious patterns and fake news indicators"""
         if not self.pattern_analyzer:
@@ -358,6 +540,90 @@ class IntelligentFactGuru:
         except Exception as e:
             log(f"⚠️ Article pattern analysis failed: {e}")
             return None
+
+    def _basic_pattern_analysis(self, claim: str) -> Dict[str, Any]:
+        """
+        Basic pattern analysis fallback when ML component is unavailable
+        Uses linguistic patterns to detect suspicious claims
+        """
+        claim_lower = claim.lower()
+        
+        # Suspicious word patterns
+        suspicious_words = [
+            'breaking', 'shocking', 'unbelievable', 'secret', 'they don\'t want you to know',
+            'hidden truth', 'exposed', 'miracle', 'instant', 'overnight', 'cover-up',
+            'conspiracy', 'mainstream media won\'t tell', 'government hiding'
+        ]
+        found_words = [word for word in suspicious_words if word in claim_lower]
+        
+        # Clickbait detection
+        clickbait_indicators = [
+            'won\'t believe', 'what happened next', 'you\'ll never guess', 'going viral',
+            'this will shock you', 'secret they don\'t want you to know', 'amazing result'
+        ]
+        clickbait_score = sum(2 for indicator in clickbait_indicators if indicator in claim_lower)
+        clickbait_score = min(clickbait_score, 10)
+        
+        # Fake news probability
+        fake_news_indicators = [
+            '100% effective', 'miracle cure', 'scientists baffled', 'doctors hate this',
+            'never before seen', 'revolutionary discovery'
+        ]
+        fake_score = sum(0.2 for indicator in fake_news_indicators if indicator in claim_lower)
+        fake_score = min(fake_score, 0.9)
+        
+        # Determine prediction based on patterns
+        if clickbait_score >= 7 or fake_score >= 0.6 or len(found_words) >= 3:
+            prediction = 'SUSPICIOUS'
+            confidence = max(0.6, (clickbait_score / 10 + fake_score) / 2)
+        elif clickbait_score >= 4 or fake_score >= 0.3 or len(found_words) >= 1:
+            prediction = 'UNCERTAIN'
+            confidence = 0.5
+        else:
+            prediction = 'CREDIBLE'
+            confidence = max(0.3, 1 - (clickbait_score / 15 + fake_score / 2))
+        
+        return {
+            'prediction': prediction,
+            'confidence': confidence,
+            'clickbait_score': clickbait_score,
+            'suspicious_words': found_words,
+            'fake_news_score': fake_score,
+            'sensationalism_score': clickbait_score / 10,
+            'note': 'Basic linguistic pattern analysis (ML component unavailable)'
+        }
+
+    def _create_pattern_only_results(self, claim: str, pattern_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Create results when only pattern analysis is available"""
+        pattern_conf = pattern_analysis.get('confidence', 0.5)
+        prediction = pattern_analysis.get('prediction', 'UNKNOWN')
+        
+        # Convert pattern prediction to verdict
+        if prediction in ['FAKE', 'SUSPICIOUS']:
+            verdict = 'FALSE'
+            confidence = pattern_conf * 0.8  # Reduce confidence for pattern-only
+        elif prediction in ['REAL', 'CREDIBLE']:
+            verdict = 'TRUE'
+            confidence = pattern_conf * 0.8  # Reduce confidence for pattern-only
+        else:
+            verdict = 'INCONCLUSIVE'
+            confidence = pattern_conf * 0.6
+        
+        return {
+            'verdict': verdict,
+            'confidence': confidence,
+            'support_sources': 0,
+            'contradict_sources': 0,
+            'total_sources': 0,
+            'average_credibility': 0,
+            'pattern_based_fallback': True,
+            'web_analysis_failed': True,
+            'analysis_method': 'PATTERN_ANALYSIS_ONLY'
+        }
+
+    def _create_pattern_based_verdict(self, claim: str, pattern_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Create verdict based solely on pattern analysis"""
+        return self._create_pattern_only_results(claim, pattern_analysis)
 
     def _get_credibility_level(self, score: float) -> str:
         """Convert numerical credibility score to human-readable level"""
@@ -557,6 +823,12 @@ class IntelligentFactGuru:
         
         if enhancements:
             print(f"🔬 Enhanced with: {', '.join(enhancements)}")
+        
+        # Show warnings for fallback modes
+        if final.get('pattern_based_fallback'):
+            print("⚠️  LIMITED ANALYSIS: Using pattern analysis only (web search failed)")
+        if final.get('web_analysis_success') is False:
+            print("⚠️  LIMITED ANALYSIS: Web verification unavailable")
         
         # Display verdict with appropriate emoji and formatting
         if verdict == "TRUE":
