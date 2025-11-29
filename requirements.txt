@@ -1,8 +1,9 @@
-streamlit
-numpy
-joblib
-beautifulsoup4
-requests
-ddgs
-transformers
-torch
+streamlit>=1.28.0
+numpy>=1.24.0
+joblib>=1.3.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+ddgs>=3.8.0
+transformers>=4.30.0
+torch>=2.0.0
+huggingface_hub>=0.20.0
