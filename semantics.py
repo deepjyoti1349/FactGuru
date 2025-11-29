@@ -53,37 +53,72 @@ class SimpleNLIVerifier:
 
     def __init__(self, model_path: str = None):
         self.model = None
-
-        # Default: look for a local model inside this project's ml/model directory
-        if model_path is not None:
-            self.model_path = model_path
-        else:
-            # semantics.py is in ml/, so ml/model is a sibling folder
-            project_root = os.path.dirname(os.path.abspath(__file__))  # .../ml
-            self.model_path = os.path.join(
-                project_root, "model")      # .../ml/model
-
+        self.model_path = model_path
         self._load_nli_model()
 
+    def _download_model_from_hf(self):
+        """Download NLI model from Hugging Face if not exists locally"""
+        try:
+            from huggingface_hub import snapshot_download
+            import os
+            
+            # Your Hugging Face repository
+            repo_id = "rockOn08/factguru-models"
+            
+            # Check if models already exist locally
+            local_model_path = "ml/model"
+            if not os.path.exists(local_model_path) or len(os.listdir(local_model_path)) == 0:
+                logger.info("📥 Downloading NLI model from Hugging Face...")
+                
+                # Download from your Hugging Face repository
+                model_path = snapshot_download(
+                    repo_id=repo_id,
+                    allow_patterns=["*.bin", "*.json", "*.txt"],  # Model files
+                    cache_dir=local_model_path,
+                    local_dir=local_model_path
+                )
+                logger.info("✅ NLI model downloaded successfully from Hugging Face")
+                return model_path
+            else:
+                logger.info("✅ Using locally cached NLI model")
+                return local_model_path
+                
+        except Exception as e:
+            logger.error(f"⚠️ NLI model download failed: {e}")
+            return None
+
     def _load_nli_model(self):
-        """Safely load the NLI model with fallback and graceful failure."""
+        """Safely load the NLI model with Hugging Face integration"""
         try:
             # Import transformers lazily so failures (torch DLL, etc.) are caught here
             from transformers import pipeline
         except Exception as e:
             logger.error(f"❌ transformers library not available: {e}")
-            logger.warning(
-                "⚠️ NLI system disabled — proceeding without semantic verifier.")
+            logger.warning("⚠️ NLI system disabled — proceeding without semantic verifier.")
             self.model = None
             return
 
-        # 1) Try local model
+        # 1) Try to download from Hugging Face first
         try:
-            logger.info(f"🔍 Looking for local NLI model at: {self.model_path}")
+            hf_model_path = self._download_model_from_hf()
+            if hf_model_path and os.path.exists(hf_model_path):
+                logger.info(f"🔍 Loading NLI model from: {hf_model_path}")
+                self.model = pipeline(
+                    "text-classification",
+                    model=hf_model_path,
+                    tokenizer=hf_model_path,
+                    max_length=512,
+                    truncation=True,
+                )
+                logger.info("✅ NLI model loaded successfully from Hugging Face")
+                return
+        except Exception as e:
+            logger.error(f"⚠️ Hugging Face model loading failed: {e}")
 
-            if os.path.exists(self.model_path):
-                logger.info(
-                    "Local model directory found. Attempting to load...")
+        # 2) Try local model path if provided
+        if self.model_path and os.path.exists(self.model_path):
+            try:
+                logger.info(f"🔍 Loading NLI model from local path: {self.model_path}")
                 self.model = pipeline(
                     "text-classification",
                     model=self.model_path,
@@ -91,20 +126,14 @@ class SimpleNLIVerifier:
                     max_length=512,
                     truncation=True,
                 )
-                logger.info(
-                    "✅ NLI model loaded successfully from local directory")
+                logger.info("✅ NLI model loaded successfully from local directory")
                 return
-            else:
-                logger.info(
-                    "No local NLI model directory found; will use fallback model.")
+            except Exception as e:
+                logger.error(f"⚠️ Local NLI model found but failed to load: {e}")
 
-        except Exception as e:
-            logger.error(f"⚠️ Local NLI model found but failed to load: {e}")
-
-        # 2) Fallback – download a standard NLI model
+        # 3) Fallback – download a standard NLI model
         try:
-            logger.info(
-                "🌐 Downloading fallback NLI model: facebook/bart-large-mnli ...")
+            logger.info("🌐 Downloading fallback NLI model: facebook/bart-large-mnli ...")
             self.model = pipeline(
                 "text-classification",
                 model="facebook/bart-large-mnli",
@@ -113,10 +142,8 @@ class SimpleNLIVerifier:
             )
             logger.info("✅ Fallback NLI model loaded successfully")
         except Exception as e:
-            logger.error(
-                f"❌ Failed to initialize any NLI model (fallback also failed): {e}")
-            logger.warning(
-                "⚠️ NLI system disabled — pattern analysis will be used only.")
+            logger.error(f"❌ Failed to initialize any NLI model (fallback also failed): {e}")
+            logger.warning("⚠️ NLI system disabled — pattern analysis will be used only.")
             self.model = None
 
     def verify_claim(self, claim: str, content: str) -> VerificationResult:
