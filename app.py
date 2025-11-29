@@ -6,6 +6,10 @@ import numpy as np
 import joblib
 import streamlit as st
 
+import requests
+from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
+
 
 # =========================
 # Load pattern analysis model
@@ -14,7 +18,7 @@ import streamlit as st
 @st.cache_resource
 def load_pattern_model():
     """
-    Load your Naive Bayes fake-news model and TF-IDF vectorizer
+    Load Naive Bayes fake-news model and TF-IDF vectorizer
     from ml/pattern_analysis.
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -44,7 +48,7 @@ def load_pattern_model():
 def load_nli_model():
     """
     Try to load NLI model, but only when ENABLE_NLI="true" in env.
-    On your local Windows machine, this will usually be disabled.
+    On local Windows this usually stays disabled.
     On Streamlit Cloud (Linux) you can enable it via secrets.
     """
     use_nli = os.getenv("ENABLE_NLI", "").lower() == "true"
@@ -70,6 +74,55 @@ def load_nli_model():
 
 
 # =========================
+# Web scraping helper for NLI
+# =========================
+
+@st.cache_data(show_spinner=False)
+def fetch_web_context(claim: str) -> str:
+    """
+    Search the web for the claim and return cleaned article text.
+    Uses DuckDuckGo search + simple HTML <p> extraction.
+    Returns empty string on failure.
+    """
+    try:
+        # 1) Search DuckDuckGo
+        url = None
+        with DDGS() as ddgs:
+            results = ddgs.text(claim, max_results=3)
+            for r in results:
+                url = r.get("href") or r.get("url")
+                if url:
+                    break
+
+        if not url:
+            return ""
+
+        # 2) Download the page
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+
+        # 3) Extract paragraph text
+        soup = BeautifulSoup(resp.text, "html.parser")
+        paragraphs = [
+            p.get_text(" ", strip=True)
+            for p in soup.find_all("p")
+            if p.get_text(strip=True)
+        ]
+        if not paragraphs:
+            return ""
+
+        content = "\n".join(paragraphs)
+
+        # Limit size for NLI
+        return content[:4000]
+
+    except Exception as e:
+        print("Web fetch error:", e)
+        traceback.print_exc()
+        return ""
+
+
+# =========================
 # Scoring helpers
 # =========================
 
@@ -85,8 +138,6 @@ def pattern_predict(model, vectorizer, text: str) -> np.ndarray:
 
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X)[0]
-            # Assume model.classes_ is [0,1] or [real,fake]
-            # If shape is (2,), treat index 1 as "fake".
             return np.array(proba, dtype=float)
 
         # Fallback if no predict_proba (unlikely)
@@ -144,18 +195,23 @@ def main():
     )
 
     st.title("🕵️‍♂️ Enhanced Fact Verification System")
-    st.caption("Powered by: Pattern Analysis, (optional) NLI Semantic Engine")
+    st.caption("Powered by: Pattern Analysis, Web Evidence & (optional) NLI Semantic Engine")
     st.markdown("---")
 
     claim = st.text_input(
         "📝 Enter claim to verify",
-        placeholder="e.g., COVID-19 vaccines cause infertility",
+        placeholder="e.g., Russia is part of USA",
     )
 
     context = st.text_area(
         "📄 Optional: paste article/content (used for semantic NLI check)",
         placeholder="Paste news article text or evidence here (optional)...",
-        height=200,
+        height=180,
+    )
+
+    auto_fetch = st.checkbox(
+        "🌐 Automatically fetch an article from the web for NLI",
+        value=True,
     )
 
     col1, _ = st.columns([1, 3])
@@ -175,12 +231,10 @@ def main():
         start = time.time()
 
         proba = pattern_predict(pattern_model, vectorizer, claim)
-        # We assume proba[0] = real, proba[1] = fake
         if len(proba) == 2:
             real_prob = float(proba[0])
             fake_prob = float(proba[1])
         else:
-            # If unexpected shape, treat as neutral
             real_prob = fake_prob = 0.5
 
         if fake_prob >= 0.6:
@@ -208,24 +262,46 @@ def main():
                 "NLI model is **disabled** on this environment. "
                 "Set `ENABLE_NLI=\"true\"` in Streamlit Cloud secrets to enable it."
             )
-        else:
-            if context.strip():
-                with st.spinner("Running NLI semantic check..."):
-                    rel = nli_relation(nli_model, claim, context)
+            return
 
-                if rel is None:
-                    st.warning("Failed to run NLI check.")
-                else:
-                    relation, score, label = rel
-                    st.write(f"NLI label: `{label}` (score: `{score:.3f}`)")
-                    if relation == "support":
-                        st.success("The content **SUPPORTS** the claim.")
-                    elif relation == "contradict":
-                        st.error("The content **CONTRADICTS** the claim.")
-                    else:
-                        st.info("The content is **NEUTRAL / IRRELEVANT** to the claim.")
+        # Decide which context to use: user text or auto-fetched
+        if context.strip():
+            context_to_use = context
+            st.write("Using **user-provided** article/content for NLI.")
+        elif auto_fetch:
+            with st.spinner("Fetching article from the web..."):
+                auto_context = fetch_web_context(claim)
+
+            if not auto_context:
+                st.info(
+                    "Could not automatically fetch a useful article. "
+                    "You can paste news content manually above."
+                )
+                return
+
+            context_to_use = auto_context
+            st.markdown("#### 🌐 Auto-fetched article snippet")
+            snippet = context_to_use[:1000]
+            st.write(snippet + ("..." if len(context_to_use) > 1000 else ""))
+        else:
+            st.info("Provide article text above or enable auto-fetching to run NLI.")
+            return
+
+        # Run NLI
+        with st.spinner("Running NLI semantic check..."):
+            rel = nli_relation(nli_model, claim, context_to_use)
+
+        if rel is None:
+            st.warning("Failed to run NLI check.")
+        else:
+            relation, score, label = rel
+            st.write(f"NLI label: `{label}` (score: `{score:.3f}`)")
+            if relation == "support":
+                st.success("The content **SUPPORTS** the claim.")
+            elif relation == "contradict":
+                st.error("The content **CONTRADICTS** the claim.")
             else:
-                st.info("Provide article/content text above to run NLI-based semantic check.")
+                st.info("The content is **NEUTRAL / IRRELEVANT** to the claim.")
 
 
 if __name__ == "__main__":
